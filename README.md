@@ -23,7 +23,7 @@ The admin header provides **Import** and **Export** actions. The same actions ap
 
 Documents are matched by ID. No import mode deletes documents. Localized content is transferred for every configured locale.
 
-Empty non-default locale variants are omitted. If a document has no localized content for a configured locale yet, the import leaves that locale untouched instead of triggering required-field validation.
+Empty non-default locale variants are omitted. When localized required fields exist, at least one of them must contain a value; generated values such as a localized slug alone do not mark the locale as translated. The import therefore leaves untranslated locales untouched instead of triggering required-field validation.
 
 Authentication and upload collections are always excluded from both import and export. This prevents incomplete authentication data and missing binary files from producing invalid restores.
 

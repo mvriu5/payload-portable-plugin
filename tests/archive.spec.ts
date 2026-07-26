@@ -99,8 +99,8 @@ describe("portable archives", () => {
     it("omits empty non-default locale variants", async () => {
         const find = vi
             .fn()
-            .mockResolvedValueOnce({ docs: [{ id: "one", title: "English" }], hasNextPage: false })
-            .mockResolvedValueOnce({ docs: [{ id: "one", title: null }], hasNextPage: false })
+            .mockResolvedValueOnce({ docs: [{ id: "one", slug: "blog", title: "English" }], hasNextPage: false })
+            .mockResolvedValueOnce({ docs: [{ id: "one", slug: "blog", title: null }], hasNextPage: false })
         const findGlobal = vi
             .fn()
             .mockResolvedValueOnce({ id: "settings", title: "English settings" })
@@ -108,8 +108,16 @@ describe("portable archives", () => {
         const req = {
             payload: {
                 config: {
-                    collections: [{ fields: [{ localized: true, name: "title", type: "text" }], slug: "posts" }],
-                    globals: [{ fields: [{ localized: true, name: "title", type: "text" }], slug: "settings" }],
+                    collections: [
+                        {
+                            fields: [
+                                { localized: true, name: "slug", type: "text" },
+                                { localized: true, name: "title", required: true, type: "text" },
+                            ],
+                            slug: "posts",
+                        },
+                    ],
+                    globals: [{ fields: [{ localized: true, name: "title", required: true, type: "text" }], slug: "settings" }],
                     localization: {
                         defaultLocale: "en",
                         locales: ["en", "de"],
@@ -123,7 +131,7 @@ describe("portable archives", () => {
 
         const archive = await createArchive(req, options)
 
-        expect(archive.collections.posts.en).toEqual([{ id: "one", title: "English" }])
+        expect(archive.collections.posts.en).toEqual([{ id: "one", slug: "blog", title: "English" }])
         expect(archive.collections.posts.de).toEqual([])
         expect(archive.globals.settings.en).toMatchObject({ title: "English settings" })
         expect(archive.globals.settings.de).toBeUndefined()

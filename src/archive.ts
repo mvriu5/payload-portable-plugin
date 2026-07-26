@@ -112,7 +112,43 @@ const getDefaultLocaleKey = (req: PayloadRequest): string => {
     return localization ? localization.defaultLocale : DEFAULT_LOCALE_KEY
 }
 
-const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>): boolean => {
+const hasRequiredLocalizedField = (fields: Field[]): boolean => {
+    for (const field of fields) {
+        if (field.type === "tabs") {
+            if (
+                field.tabs.some(
+                    (tab) =>
+                        !fieldShouldBeLocalized({ field: tab, parentIsLocalized: false }) &&
+                        hasRequiredLocalizedField(tab.fields)
+                )
+            ) {
+                return true
+            }
+
+            continue
+        }
+
+        if (fieldAffectsData(field) && fieldShouldBeLocalized({ field, parentIsLocalized: false })) {
+            if (field.required) {
+                return true
+            }
+
+            continue
+        }
+
+        if (fieldIsBlockType(field)) {
+            if (field.blocks.some((block) => hasRequiredLocalizedField(block.fields))) {
+                return true
+            }
+        } else if (fieldHasSubFields(field) && hasRequiredLocalizedField(field.fields)) {
+            return true
+        }
+    }
+
+    return false
+}
+
+const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>, requiredOnly = false): boolean => {
     for (const field of fields) {
         if (field.type === "tabs") {
             for (const tab of field.tabs) {
@@ -130,7 +166,7 @@ const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>): bo
                     if (tabHasName(tab) && hasValue(data[tab.name])) {
                         return true
                     }
-                } else if (hasLocalizedContent(tab.fields, tabData)) {
+                } else if (hasLocalizedContent(tab.fields, tabData, requiredOnly)) {
                     return true
                 }
             }
@@ -142,7 +178,7 @@ const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>): bo
             const value = data[field.name]
 
             if (fieldShouldBeLocalized({ field, parentIsLocalized: false })) {
-                if (hasValue(value)) {
+                if ((!requiredOnly || field.required) && hasValue(value)) {
                     return true
                 }
 
@@ -157,16 +193,16 @@ const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>): bo
 
                     const block = field.blocks.find(({ slug }) => slug === row.blockType)
 
-                    if (block && hasLocalizedContent(block.fields, row)) {
+                    if (block && hasLocalizedContent(block.fields, row, requiredOnly)) {
                         return true
                     }
                 }
             } else if (fieldHasSubFields(field)) {
                 if (fieldIsArrayType(field) && Array.isArray(value)) {
-                    if (value.some((row) => isObject(row) && hasLocalizedContent(field.fields, row))) {
+                    if (value.some((row) => isObject(row) && hasLocalizedContent(field.fields, row, requiredOnly))) {
                         return true
                     }
-                } else if (isObject(value) && hasLocalizedContent(field.fields, value)) {
+                } else if (isObject(value) && hasLocalizedContent(field.fields, value, requiredOnly)) {
                     return true
                 }
             }
@@ -174,13 +210,16 @@ const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>): bo
             continue
         }
 
-        if (fieldHasSubFields(field) && hasLocalizedContent(field.fields, data)) {
+        if (fieldHasSubFields(field) && hasLocalizedContent(field.fields, data, requiredOnly)) {
             return true
         }
     }
 
     return false
 }
+
+const shouldIncludeLocale = (fields: Field[], data: Record<string, unknown>): boolean =>
+    hasRequiredLocalizedField(fields) ? hasLocalizedContent(fields, data, true) : hasLocalizedContent(fields, data)
 
 const serializeError = (error: unknown): string => {
     if (error instanceof Error) {
@@ -332,7 +371,7 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
                 documents.push(
                     ...result.docs.filter(
                         (document) =>
-                            localeKey === defaultLocaleKey || hasLocalizedContent(collectionConfig.fields, document)
+                            localeKey === defaultLocaleKey || shouldIncludeLocale(collectionConfig.fields, document)
                     )
                 )
                 hasNextPage = result.hasNextPage
@@ -363,7 +402,7 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
                 user: req.user ?? undefined,
             })
 
-            if (localeKey === defaultLocaleKey || hasLocalizedContent(globalConfig.fields, data)) {
+            if (localeKey === defaultLocaleKey || shouldIncludeLocale(globalConfig.fields, data)) {
                 archive.globals[slug][localeKey] = data
             }
         }
