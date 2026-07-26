@@ -95,8 +95,10 @@ const PortableButtons = ({ collectionSlug, onImportSuccess }: PortableButtonsPro
             const report = (await response.json()) as PortableImportReport
             const changes = report.collections.created + report.collections.updated
             const firstError = report.errors[0]
-            const errorSuffix = firstError ? ` ${report.errors.length} item(s) failed. First error (${firstError.entity}): ${firstError.message}` : ""
-            const message = `${changes} collection document(s) and ${report.globals.updated} global(s) imported.${errorSuffix}`
+            const errorSuffix = firstError ? ` ${report.errors.length} issue(s). First issue (${firstError.entity}): ${firstError.message}` : ""
+            const skipped = report.collections.skipped + report.globals.skipped
+            const skippedSuffix = skipped ? ` ${report.collections.skipped} collection document(s) and ${report.globals.skipped} global(s) skipped.` : ""
+            const message = `${changes} collection document(s) and ${report.globals.updated} global(s) imported.${skippedSuffix}${errorSuffix}`
 
             await onImportSuccess?.()
 

@@ -2,8 +2,14 @@ import type { Config, PayloadRequest } from "payload"
 
 import { createCollectionExportHandler, createExportHandler } from "./endpoints/export.js"
 import { createCollectionImportHandler, createImportHandler } from "./endpoints/import.js"
+import type { PortableImportMode } from "./types.js"
 
 export type PayloadPortablePluginConfig = {
+    /**
+     * Controls whether imports add missing documents, replace matching documents,
+     * or do both.
+     */
+    importMode: PortableImportMode
     /**
      * Optional additional authorization check. Payload access control is always
      * enforced for every read and write performed by the plugin.
@@ -32,8 +38,12 @@ export type PayloadPortablePluginConfig = {
 }
 
 export const payloadPortablePlugin =
-    (pluginOptions: PayloadPortablePluginConfig = {}) =>
+    (pluginOptions: PayloadPortablePluginConfig) =>
     (config: Config): Config => {
+        if (!pluginOptions || !["add", "merge", "replace"].includes(pluginOptions.importMode)) {
+            throw new Error('payloadPortablePlugin requires importMode to be "add", "merge", or "replace".')
+        }
+
         if (pluginOptions.disabled) {
             return config
         }
@@ -46,6 +56,7 @@ export const payloadPortablePlugin =
             excludeCollections: new Set(pluginOptions.excludeCollections ?? []),
             excludeGlobals: new Set(pluginOptions.excludeGlobals ?? []),
             globals: new Set((config.globals ?? []).map(({ slug }) => slug)),
+            importMode: pluginOptions.importMode,
         }
 
         config.endpoints = [
@@ -100,4 +111,4 @@ export const payloadPortablePlugin =
         return config
     }
 
-export type { PortableArchive, PortableImportReport } from "./types.js"
+export type { PortableArchive, PortableImportMode, PortableImportReport } from "./types.js"

@@ -47,7 +47,12 @@ export default buildConfig({
             ],
         },
     ],
-    plugins: [payloadPortablePlugin({ access: () => true })],
+    plugins: [
+        payloadPortablePlugin({
+            access: () => true,
+            importMode: "merge",
+        }),
+    ],
     secret: process.env.PAYLOAD_SECRET ?? "dev-secret",
     typescript: {
         outputFile: path.resolve(dirname, "payload-types.ts"),

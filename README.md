@@ -1,8 +1,8 @@
 # Payload Portable Plugin
 
-Exportiert alle konfigurierten Payload-Collections und Globals über Aktionen in der Admin-Kopfzeile in eine einzige JSON-Datei und importiert sie später wieder.
+Export all configured Payload collections and globals to a single JSON file and import them again through actions in the admin panel.
 
-## Verwendung
+## Usage
 
 ```ts
 import { postgresAdapter } from "@payloadcms/db-postgres"
@@ -15,32 +15,48 @@ export default buildConfig({
             connectionString: process.env.DATABASE_URL!,
         },
     }),
-    plugins: [payloadPortablePlugin()],
+    plugins: [payloadPortablePlugin({ importMode: "merge" })],
 })
 ```
 
-In der Admin-Kopfzeile stehen anschließend **Import** und **Export** zur Verfügung. In der Listenansicht jeder eingebundenen Collection erscheinen dieselben Aktionen neben **Create New** und arbeiten dort ausschließlich mit dieser Collection. Der Import arbeitet als Upsert anhand der Dokument-ID: vorhandene Datensätze werden aktualisiert, fehlende angelegt. Es werden keine Datensätze gelöscht. Lokalisierte Inhalte werden für alle konfigurierten Sprachen übertragen.
+The admin header provides **Import** and **Export** actions. The same actions appear next to **Create New** in each included collection list and operate only on that collection.
 
-Alle Endpunkte verlangen standardmäßig einen angemeldeten Benutzer. Zusätzlich erzwingt jede einzelne Lese- und Schreiboperation die Access-Control-Regeln der jeweiligen Collection bzw. des Globals.
+Documents are matched by ID. No import mode deletes documents. Localized content is transferred for every configured locale.
 
-`allowIDOnCreate: true` ist für den Datenbankadapter erforderlich, damit fehlende Dokumente mit ihrer ursprünglichen ID angelegt werden und Beziehungsreferenzen gültig bleiben. Ist die Option nicht aktiv, aktualisiert der Import vorhandene Dokumente, weist neue Dokumente jedoch mit einem klaren Fehler zurück.
+By default, all endpoints require an authenticated user. Every individual read and write operation also enforces the access-control rules of its collection or global.
 
-## Optionen
+`allowIDOnCreate: true` is required on the database adapter to create missing documents with their original IDs and preserve relationship references. Without this option, existing documents can still be updated, while missing documents are skipped and reported.
+
+### Import mode
+
+The required `importMode` plugin option controls how documents are imported:
+
+- `"merge"` creates missing documents and updates existing documents
+- `"add"` creates only missing documents and leaves existing documents unchanged
+- `"replace"` updates only existing documents and skips missing documents
+
+Globals are updated in `"merge"` and `"replace"` modes. They are skipped in `"add"` mode because globals always exist.
+
+## Options
 
 ```ts
 payloadPortablePlugin({
+    access: ({ req }) => req.user?.roles?.includes("admin") === true,
     batchSize: 250,
     excludeCollections: ["payload-preferences"],
     excludeGlobals: ["internal-settings"],
-    access: ({ req }) => req.user?.roles?.includes("admin") === true,
+    importMode: "merge",
 })
 ```
 
-- `access`: zusätzliche Berechtigungsprüfung; standardmäßig ist jeder angemeldete Benutzer zugelassen
-- `batchSize`: Größe der Exportseiten, standardmäßig `100`, maximal `1000`
-- `excludeCollections` / `excludeGlobals`: Slugs, die in beiden Richtungen übersprungen werden
-- `disabled`: deaktiviert die Kopfzeilenaktionen und Endpunkte
+- `importMode`: required import mode: `"merge"`, `"add"`, or `"replace"`
+- `access`: additional authorization check; authenticated users are allowed by default
+- `batchSize`: export page size; defaults to `100` and is limited to `1000`
+- `excludeCollections` / `excludeGlobals`: slugs to skip during both import and export
+- `disabled`: disables the admin actions and endpoints
 
-## Hinweise
+## Notes
 
-Das Archiv enthält Collection-Dokumente und Global-Daten einschließlich Beziehungs- und Upload-Referenzen. Binärdateien aus Upload-Collections sowie geheime, von Payload ausgeblendete Authentifizierungsdaten werden nicht eingebettet. Hooks, Validierung und Access Control laufen beim Import regulär; Schemaunterschiede werden deshalb pro Datensatz im Importbericht ausgewiesen.
+The archive contains collection documents and global data, including relationship and upload references. Binary files from upload collections and secret authentication data hidden by Payload are not embedded.
+
+Hooks, validation, and access control run normally during imports. Schema mismatches are therefore included in the import report for each affected document.

@@ -11,6 +11,7 @@ const options = {
     excludeCollections: new Set<string>(),
     excludeGlobals: new Set<string>(),
     globals: new Set(["settings"]),
+    importMode: "merge" as const,
 }
 
 describe("payloadPortablePlugin", () => {
@@ -27,7 +28,7 @@ describe("payloadPortablePlugin", () => {
             ],
             endpoints: [existingEndpoint],
         } as unknown as Config
-        const config = payloadPortablePlugin({})(incomingConfig)
+        const config = payloadPortablePlugin({ importMode: "merge" })(incomingConfig)
 
         expect(config.endpoints?.map(({ path }) => path)).toEqual([
             "/existing",
@@ -45,7 +46,12 @@ describe("payloadPortablePlugin", () => {
 
     it("does not change the config when disabled", () => {
         const config = { collections: [] } as unknown as Config
-        expect(payloadPortablePlugin({ disabled: true })(config)).toBe(config)
+        expect(payloadPortablePlugin({ disabled: true, importMode: "merge" })(config)).toBe(config)
+    })
+
+    it("requires a valid import mode", () => {
+        const config = { collections: [] } as unknown as Config
+        expect(() => payloadPortablePlugin({} as any)(config)).toThrow("requires importMode")
     })
 })
 
@@ -120,12 +126,81 @@ describe("portable archives", () => {
 
         const report = await importArchive(req, archive, options)
 
-        expect(report.collections).toEqual({ created: 1, updated: 1 })
-        expect(report.globals.updated).toBe(1)
+        expect(report.collections).toEqual({ created: 1, skipped: 0, updated: 1 })
+        expect(report.globals).toEqual({ skipped: 0, updated: 1 })
         expect(report.errors).toHaveLength(1)
         expect(update).toHaveBeenCalledWith(expect.objectContaining({ data: { title: "Updated" }, id: "existing", overrideAccess: false }))
         expect(create).toHaveBeenCalledWith(expect.objectContaining({ data: { id: "new", title: "Created" }, overrideAccess: false }))
         expect(updateGlobal).toHaveBeenCalledWith(expect.objectContaining({ data: { title: "Imported" }, slug: "settings" }))
+    })
+
+    it("supports add-only and replace-existing import modes", async () => {
+        const create = vi.fn().mockResolvedValue({})
+        const update = vi.fn().mockResolvedValue({})
+        const find = vi.fn(async ({ where }: any) => ({
+            docs: where.id.equals === "existing" ? [{ id: "existing" }] : [],
+        }))
+        const req = {
+            payload: {
+                config: { collections: [{ slug: "posts" }], globals: [], localization: false },
+                db: { allowIDOnCreate: true },
+                create,
+                find,
+                update,
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                posts: {
+                    [DEFAULT_LOCALE_KEY]: [
+                        { id: "existing", title: "Updated" },
+                        { id: "new", title: "Created" },
+                    ],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const addReport = await importArchive(req, archive, { ...options, importMode: "add" })
+        expect(addReport.collections).toEqual({ created: 1, skipped: 1, updated: 0 })
+        expect(create).toHaveBeenCalledTimes(1)
+        expect(update).not.toHaveBeenCalled()
+
+        create.mockClear()
+        const replaceReport = await importArchive(req, archive, { ...options, importMode: "replace" })
+        expect(replaceReport.collections).toEqual({ created: 0, skipped: 1, updated: 1 })
+        expect(create).not.toHaveBeenCalled()
+        expect(update).toHaveBeenCalledTimes(1)
+    })
+
+    it("reports missing ID support once and skips affected documents", async () => {
+        const req = {
+            payload: {
+                config: { collections: [{ slug: "posts" }], globals: [], localization: false },
+                db: { allowIDOnCreate: false },
+                create: vi.fn(),
+                find: vi.fn().mockResolvedValue({ docs: [] }),
+                update: vi.fn(),
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: { posts: { [DEFAULT_LOCALE_KEY]: [{ id: "one" }, { id: "two" }] } },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, options)
+
+        expect(report.collections).toEqual({ created: 0, skipped: 2, updated: 0 })
+        expect(report.errors).toHaveLength(1)
+        expect(req.payload.create).not.toHaveBeenCalled()
     })
 
     it("rejects unsupported JSON before importing anything", () => {

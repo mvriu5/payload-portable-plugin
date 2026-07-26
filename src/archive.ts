@@ -246,15 +246,20 @@ const documentExists = async (req: PayloadRequest, collection: string, id: numbe
     return result.docs.length > 0
 }
 
-export const importArchive = async (req: PayloadRequest, archive: PortableArchive, options: PortableRuntimeOptions): Promise<PortableImportReport> => {
+export const importArchive = async (
+    req: PayloadRequest,
+    archive: PortableArchive,
+    options: PortableRuntimeOptions
+): Promise<PortableImportReport> => {
     const report: PortableImportReport = {
-        collections: { created: 0, updated: 0 },
+        collections: { created: 0, skipped: 0, updated: 0 },
         errors: [],
-        globals: { updated: 0 },
+        globals: { skipped: 0, updated: 0 },
     }
     const collectionSlugs = new Set<string>(req.payload.config.collections.map(({ slug }) => slug))
     const globalSlugs = new Set<string>(req.payload.config.globals.map(({ slug }) => slug))
     const payload = getDynamicPayload(req)
+    const collectionsMissingIDSupport = new Set<string>()
 
     const addError = (error: Omit<PortableImportError, "message">, cause: unknown): void => {
         report.errors.push({ ...error, message: serializeError(cause) })
@@ -278,6 +283,11 @@ export const importArchive = async (req: PayloadRequest, archive: PortableArchiv
                     const exists = await documentExists(req, collection, document.id, locale)
 
                     if (exists) {
+                        if (options.importMode === "add") {
+                            report.collections.skipped += 1
+                            continue
+                        }
+
                         await payload.update({
                             collection,
                             data: stripManagedFields(document, false),
@@ -290,10 +300,25 @@ export const importArchive = async (req: PayloadRequest, archive: PortableArchiv
                         })
                         report.collections.updated += 1
                     } else {
+                        if (options.importMode === "replace") {
+                            report.collections.skipped += 1
+                            continue
+                        }
+
                         if (payload.db.allowIDOnCreate !== true) {
-                            throw new Error(
-                                'The database adapter must be configured with "allowIDOnCreate: true" before missing documents can be restored with their original IDs.'
-                            )
+                            report.collections.skipped += 1
+
+                            if (!collectionsMissingIDSupport.has(collection)) {
+                                collectionsMissingIDSupport.add(collection)
+                                addError(
+                                    { entity: collection, type: "collection" },
+                                    new Error(
+                                        'Missing documents were skipped because the database adapter is not configured with "allowIDOnCreate: true". Enable it to preserve IDs and relationship references, or use "Replace existing only".'
+                                    )
+                                )
+                            }
+
+                            continue
                         }
 
                         await payload.create({
@@ -325,6 +350,11 @@ export const importArchive = async (req: PayloadRequest, archive: PortableArchiv
         }
 
         for (const [localeKey, data] of Object.entries(locales)) {
+            if (options.importMode === "add") {
+                report.globals.skipped += 1
+                continue
+            }
+
             try {
                 await payload.updateGlobal({
                     data: stripManagedFields(data, false),

@@ -27,13 +27,17 @@ export type PortableImportError = {
 export type PortableImportReport = {
     collections: {
         created: number
+        skipped: number
         updated: number
     }
     errors: PortableImportError[]
     globals: {
+        skipped: number
         updated: number
     }
 }
+
+export type PortableImportMode = "add" | "merge" | "replace"
 
 export type PortableRuntimeOptions = {
     access?: (args: { req: PayloadRequest }) => boolean | Promise<boolean>
@@ -42,4 +46,5 @@ export type PortableRuntimeOptions = {
     excludeCollections: Set<string>
     excludeGlobals: Set<string>
     globals: Set<string>
+    importMode: PortableImportMode
 }
