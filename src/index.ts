@@ -119,4 +119,4 @@ export const payloadPortablePlugin =
         return config
     }
 
-export type { PortableArchive, PortableImportMode, PortableImportReport } from "./types.js"
+export type { PortableArchive, PortableImportError, PortableImportErrorCode, PortableImportMode, PortableImportReport } from "./types.js"

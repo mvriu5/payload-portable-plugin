@@ -229,6 +229,7 @@ describe("portable archives", () => {
                 db: { allowIDOnCreate: false },
                 create: vi.fn(),
                 find: vi.fn().mockResolvedValue({ docs: [] }),
+                logger: { error: vi.fn() },
                 update: vi.fn(),
             },
             user: { id: "admin" },
@@ -245,7 +246,57 @@ describe("portable archives", () => {
 
         expect(report.collections).toEqual({ created: 0, skipped: 2, updated: 0 })
         expect(report.errors).toHaveLength(1)
+        expect(report.errors[0]).toMatchObject({
+            code: "MISSING_ID_SUPPORT",
+            count: 2,
+            entity: "posts",
+            ids: ["one", "two"],
+            locales: [DEFAULT_LOCALE_KEY],
+        })
+        expect(report.errors[0].message).not.toContain("allowIDOnCreate")
+        expect(req.payload.logger.error).toHaveBeenCalledTimes(2)
         expect(req.payload.create).not.toHaveBeenCalled()
+    })
+
+    it("groups and sanitizes repeated validation errors", async () => {
+        const logger = { error: vi.fn() }
+        const req = {
+            payload: {
+                config: { collections: [{ slug: "posts" }], globals: [], localization: false },
+                db: { allowIDOnCreate: true },
+                find: vi.fn().mockResolvedValue({ docs: [{ id: "existing" }] }),
+                logger,
+                update: vi.fn().mockRejectedValue(new Error("The following field is invalid: title")),
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                posts: {
+                    [DEFAULT_LOCALE_KEY]: [
+                        { id: "one", title: null },
+                        { id: "two", title: null },
+                    ],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, options)
+
+        expect(report.errors).toEqual([
+            expect.objectContaining({
+                code: "VALIDATION_ERROR",
+                count: 2,
+                fields: ["title"],
+                ids: ["one", "two"],
+                message: "One or more fields failed validation.",
+            }),
+        ])
+        expect(logger.error).toHaveBeenCalledTimes(2)
     })
 
     it("rejects unsupported JSON before importing anything", () => {

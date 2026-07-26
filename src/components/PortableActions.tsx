@@ -20,6 +20,37 @@ const getErrorMessage = async (response: Response): Promise<string> => {
     }
 }
 
+const downloadImportErrorReport = (report: PortableImportReport): number => {
+    const failed = report.errors.reduce((total, error) => total + error.count, 0)
+    const generatedAt = new Date().toISOString()
+    const blob = new Blob(
+        [
+            JSON.stringify(
+                {
+                    errors: report.errors,
+                    generatedAt,
+                    summary: {
+                        collections: report.collections,
+                        failed,
+                        globals: report.globals,
+                    },
+                },
+                null,
+                2
+            ),
+        ],
+        { type: "application/json" }
+    )
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.download = `payload-import-errors-${generatedAt.replace(/[:.]/g, "-")}.json`
+    link.click()
+    URL.revokeObjectURL(url)
+
+    return failed
+}
+
 type PortableButtonsProps = {
     collectionSlug?: string
     onImportSuccess?: () => Promise<void> | void
@@ -96,16 +127,15 @@ const PortableButtons = ({ collectionSlug, onImportSuccess }: PortableButtonsPro
 
             const report = (await response.json()) as PortableImportReport
             const changes = report.collections.created + report.collections.updated
-            const firstError = report.errors[0]
-            const errorSuffix = firstError ? ` ${report.errors.length} issue(s). First issue (${firstError.entity}): ${firstError.message}` : ""
             const skipped = report.collections.skipped + report.globals.skipped
             const skippedSuffix = skipped ? ` ${report.collections.skipped} collection document(s) and ${report.globals.skipped} global(s) skipped.` : ""
-            const message = `${changes} collection document(s) and ${report.globals.updated} global(s) imported.${skippedSuffix}${errorSuffix}`
+            const message = `${changes} collection document(s) and ${report.globals.updated} global(s) imported.${skippedSuffix}`
 
             await onImportSuccess?.()
 
-            if (firstError) {
-                toast.error(message)
+            if (report.errors.length) {
+                const failed = downloadImportErrorReport(report)
+                toast.error(`Import completed with ${failed} error(s). Error report downloaded.`)
             } else {
                 toast.success(message)
             }

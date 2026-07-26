@@ -16,10 +16,23 @@ export type PortableArchive = {
     version: typeof PORTABLE_VERSION
 }
 
+export type PortableImportErrorCode =
+    | "ACCESS_DENIED"
+    | "DUPLICATE_VALUE"
+    | "MISSING_ID_SUPPORT"
+    | "MISSING_RELATION"
+    | "SCHEMA_MISMATCH"
+    | "UNKNOWN_ERROR"
+    | "VALIDATION_ERROR"
+
 export type PortableImportError = {
+    code: PortableImportErrorCode
+    count: number
     entity: string
-    id?: number | string
-    locale?: string
+    fields?: string[]
+    hint: string
+    ids: Array<number | string>
+    locales: string[]
     message: string
     type: "collection" | "global"
 }

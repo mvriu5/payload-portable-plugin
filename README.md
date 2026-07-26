@@ -64,3 +64,5 @@ payloadPortablePlugin({
 The archive contains collection documents and global data, including relationship and upload references. Binary files from upload collections and secret authentication data hidden by Payload are not embedded.
 
 Hooks, validation, and access control run normally during imports. Schema mismatches are therefore included in the import report for each affected document.
+
+If an import contains errors, the admin UI automatically downloads a sanitized JSON error report. Repeated errors are grouped by entity and error code, with affected IDs, locales, and a suggested resolution. Full technical errors remain available in the Payload server log; SQL queries, local file paths, and stack traces are not exposed in the downloaded report.

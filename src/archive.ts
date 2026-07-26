@@ -9,6 +9,7 @@ import {
     type PortableArchive,
     type PortableDocument,
     type PortableImportError,
+    type PortableImportErrorCode,
     type PortableImportReport,
     type PortableRuntimeOptions,
 } from "./types.js"
@@ -189,6 +190,82 @@ const serializeError = (error: unknown): string => {
     return String(error)
 }
 
+type ClassifiedImportError = {
+    code: PortableImportErrorCode
+    fields?: string[]
+    hint: string
+    message: string
+}
+
+const classifyImportError = (cause: unknown): ClassifiedImportError => {
+    const technicalMessage = serializeError(cause)
+    const normalized = technicalMessage.toLowerCase()
+    const invalidFields = technicalMessage.match(/invalid:\s*(.+)$/i)?.[1]
+        ?.split(",")
+        .map((field) => field.trim())
+        .filter(Boolean)
+
+    if (normalized.includes("allowidoncreate")) {
+        return {
+            code: "MISSING_ID_SUPPORT",
+            hint: 'Configure the database adapter with "allowIDOnCreate: true", or use the "replace" import mode.',
+            message: "Missing documents could not be restored with their original IDs.",
+        }
+    }
+
+    if (normalized.includes("does not exist in the target config") || normalized.includes("schema")) {
+        return {
+            code: "SCHEMA_MISMATCH",
+            hint: "Ensure that the source and target Payload configurations contain the same collections, globals, and fields.",
+            message: "The exported entity does not match the target Payload configuration.",
+        }
+    }
+
+    if (normalized.includes("not allowed") || normalized.includes("access denied") || normalized.includes("forbidden")) {
+        return {
+            code: "ACCESS_DENIED",
+            hint: "Check the plugin access option and the access-control rules of the affected entity.",
+            message: "The current user is not allowed to import this item.",
+        }
+    }
+
+    if (normalized.includes("duplicate key") || normalized.includes("already exists") || normalized.includes("unique")) {
+        return {
+            code: "DUPLICATE_VALUE",
+            hint: "Check unique fields in the target collection and resolve conflicting values before importing again.",
+            message: "A unique value already exists in the target collection.",
+        }
+    }
+
+    if (
+        normalized.includes("failed query") ||
+        normalized.includes("foreign key") ||
+        normalized.includes("relationship") ||
+        normalized.includes("referenced document")
+    ) {
+        return {
+            code: "MISSING_RELATION",
+            hint: "Ensure referenced documents already exist, or import their collections before importing this entity.",
+            message: "One or more referenced documents are missing or could not be linked.",
+        }
+    }
+
+    if (invalidFields?.length || normalized.includes("validation") || normalized.includes("required")) {
+        return {
+            code: "VALIDATION_ERROR",
+            fields: invalidFields,
+            hint: "Check required fields and field validation rules in the target Payload configuration.",
+            message: "One or more fields failed validation.",
+        }
+    }
+
+    return {
+        code: "UNKNOWN_ERROR",
+        hint: "Check the Payload server log for the full technical error.",
+        message: "The item could not be imported.",
+    }
+}
+
 const stripManagedFields = (document: Record<string, unknown>, keepID: boolean): Record<string, unknown> => {
     const data = { ...document }
 
@@ -361,10 +438,51 @@ export const importArchive = async (
     const collectionSlugs = new Set<string>(req.payload.config.collections.map(({ slug }) => slug))
     const globalSlugs = new Set<string>(req.payload.config.globals.map(({ slug }) => slug))
     const payload = getDynamicPayload(req)
-    const collectionsMissingIDSupport = new Set<string>()
+    const addError = (
+        error: { entity: string; id?: number | string; locale?: string; type: "collection" | "global" },
+        cause: unknown
+    ): void => {
+        const classified = classifyImportError(cause)
+        const existing = report.errors.find(
+            (item) =>
+                item.code === classified.code &&
+                item.entity === error.entity &&
+                item.message === classified.message &&
+                item.type === error.type &&
+                JSON.stringify(item.fields) === JSON.stringify(classified.fields)
+        )
 
-    const addError = (error: Omit<PortableImportError, "message">, cause: unknown): void => {
-        report.errors.push({ ...error, message: serializeError(cause) })
+        req.payload.logger?.error({
+            entity: error.entity,
+            err: cause instanceof Error ? cause : new Error(String(cause)),
+            id: error.id,
+            locale: error.locale,
+            msg: "Payload Portable import failed",
+            type: error.type,
+        })
+
+        if (existing) {
+            existing.count += 1
+
+            if (error.id !== undefined && !existing.ids.includes(error.id)) {
+                existing.ids.push(error.id)
+            }
+
+            if (error.locale && !existing.locales.includes(error.locale)) {
+                existing.locales.push(error.locale)
+            }
+
+            return
+        }
+
+        report.errors.push({
+            ...classified,
+            count: 1,
+            entity: error.entity,
+            ids: error.id === undefined ? [] : [error.id],
+            locales: error.locale ? [error.locale] : [],
+            type: error.type,
+        })
     }
 
     for (const [collection, locales] of Object.entries(archive.collections)) {
@@ -409,16 +527,12 @@ export const importArchive = async (
 
                         if (payload.db.allowIDOnCreate !== true) {
                             report.collections.skipped += 1
-
-                            if (!collectionsMissingIDSupport.has(collection)) {
-                                collectionsMissingIDSupport.add(collection)
-                                addError(
-                                    { entity: collection, type: "collection" },
-                                    new Error(
-                                        'Missing documents were skipped because the database adapter is not configured with "allowIDOnCreate: true". Enable it to preserve IDs and relationship references, or use "Replace existing only".'
-                                    )
+                            addError(
+                                { entity: collection, id: document.id, locale: localeKey, type: "collection" },
+                                new Error(
+                                    'Missing documents were skipped because the database adapter is not configured with "allowIDOnCreate: true".'
                                 )
-                            }
+                            )
 
                             continue
                         }
