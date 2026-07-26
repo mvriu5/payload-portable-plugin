@@ -23,6 +23,8 @@ The admin header provides **Import** and **Export** actions. The same actions ap
 
 Documents are matched by ID. No import mode deletes documents. Localized content is transferred for every configured locale.
 
+Authentication and upload collections are always excluded from both import and export. This prevents incomplete authentication data and missing binary files from producing invalid restores.
+
 By default, all endpoints require an authenticated user. Every individual read and write operation also enforces the access-control rules of its collection or global.
 
 `allowIDOnCreate: true` is required on the database adapter to create missing documents with their original IDs and preserve relationship references. Without this option, existing documents can still be updated, while missing documents are skipped and reported.
@@ -52,7 +54,7 @@ payloadPortablePlugin({
 - `importMode`: required import mode: `"merge"`, `"add"`, or `"replace"`
 - `access`: additional authorization check; authenticated users are allowed by default
 - `batchSize`: export page size; defaults to `100` and is limited to `1000`
-- `excludeCollections` / `excludeGlobals`: slugs to skip during both import and export
+- `excludeCollections` / `excludeGlobals`: additional slugs to skip during both import and export
 - `disabled`: disables the admin actions and endpoints
 
 ## Notes

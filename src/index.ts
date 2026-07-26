@@ -49,11 +49,19 @@ export const payloadPortablePlugin =
         }
 
         const batchSize = Math.max(1, Math.min(pluginOptions.batchSize ?? 100, 1000))
+        const excludedCollections = new Set(pluginOptions.excludeCollections ?? [])
+
+        for (const collection of config.collections ?? []) {
+            if (collection.auth || collection.upload) {
+                excludedCollections.add(collection.slug)
+            }
+        }
+
         const options = {
             access: pluginOptions.access,
             batchSize,
             collections: new Set((config.collections ?? []).map(({ slug }) => slug)),
-            excludeCollections: new Set(pluginOptions.excludeCollections ?? []),
+            excludeCollections: excludedCollections,
             excludeGlobals: new Set(pluginOptions.excludeGlobals ?? []),
             globals: new Set((config.globals ?? []).map(({ slug }) => slug)),
             importMode: pluginOptions.importMode,

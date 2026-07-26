@@ -25,6 +25,16 @@ describe("payloadPortablePlugin", () => {
                     fields: [],
                     slug: "posts",
                 },
+                {
+                    auth: true,
+                    fields: [],
+                    slug: "users",
+                },
+                {
+                    fields: [],
+                    slug: "media",
+                    upload: true,
+                },
             ],
             endpoints: [existingEndpoint],
         } as unknown as Config
@@ -42,6 +52,8 @@ describe("payloadPortablePlugin", () => {
             "existing#BeforeList",
             "@mvriu5/payload-portable-plugin/client#CollectionPortableActions",
         ])
+        expect(config.collections?.[1]?.admin?.components?.beforeList).toBeUndefined()
+        expect(config.collections?.[2]?.admin?.components?.beforeList).toBeUndefined()
     })
 
     it("does not change the config when disabled", () => {
