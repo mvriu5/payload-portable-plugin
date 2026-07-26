@@ -1,113 +1,74 @@
-import type { CollectionSlug, Config } from 'payload'
+import type { Config, PayloadRequest } from "payload"
 
-import { customEndpointHandler } from './endpoints/customEndpointHandler.js'
+import { createExportHandler } from "./endpoints/export.js"
+import { createImportHandler } from "./endpoints/import.js"
 
 export type PayloadPortablePluginConfig = {
-  /**
-   * List of collections to add a custom field
-   */
-  collections?: Partial<Record<CollectionSlug, true>>
-  disabled?: boolean
+    /**
+     * Optional additional authorization check. Payload access control is always
+     * enforced for every read and write performed by the plugin.
+     *
+     * @default ({ req }) => Boolean(req.user)
+     */
+    access?: (args: { req: PayloadRequest }) => boolean | Promise<boolean>
+    /**
+     * Number of documents fetched per export query.
+     *
+     * @default 100
+     */
+    batchSize?: number
+    /**
+     * Disable the endpoints and dashboard component.
+     */
+    disabled?: boolean
+    /**
+     * Collections that must not be exported or imported.
+     */
+    excludeCollections?: string[]
+    /**
+     * Globals that must not be exported or imported.
+     */
+    excludeGlobals?: string[]
 }
 
 export const payloadPortablePlugin =
-  (pluginOptions: PayloadPortablePluginConfig) =>
-  (config: Config): Config => {
-    if (!config.collections) {
-      config.collections = []
-    }
-
-    config.collections.push({
-      slug: 'plugin-collection',
-      fields: [
-        {
-          name: 'id',
-          type: 'text',
-        },
-      ],
-    })
-
-    if (pluginOptions.collections) {
-      for (const collectionSlug in pluginOptions.collections) {
-        const collection = config.collections.find(
-          (collection) => collection.slug === collectionSlug,
-        )
-
-        if (collection) {
-          collection.fields.push({
-            name: 'addedByPlugin',
-            type: 'text',
-            admin: {
-              position: 'sidebar',
-            },
-          })
+    (pluginOptions: PayloadPortablePluginConfig = {}) =>
+    (config: Config): Config => {
+        if (pluginOptions.disabled) {
+            return config
         }
-      }
+
+        const batchSize = Math.max(1, Math.min(pluginOptions.batchSize ?? 100, 1000))
+        const options = {
+            access: pluginOptions.access,
+            batchSize,
+            excludeCollections: new Set(pluginOptions.excludeCollections ?? []),
+            excludeGlobals: new Set(pluginOptions.excludeGlobals ?? []),
+        }
+
+        config.endpoints = [
+            ...(config.endpoints ?? []),
+            {
+                handler: createExportHandler(options),
+                method: "get",
+                path: "/portable/export",
+            },
+            {
+                handler: createImportHandler(options),
+                method: "post",
+                path: "/portable/import",
+            },
+        ]
+
+        config.admin = {
+            ...(config.admin ?? {}),
+            components: {
+                ...(config.admin?.components ?? {}),
+                beforeDashboard: [...(config.admin?.components?.beforeDashboard ?? []), "@mvriu5/payload-portable-plugin/client#PortableDashboard"],
+            },
+        }
+
+        return config
     }
 
-    /**
-     * If the plugin is disabled, we still want to keep added collections/fields so the database schema is consistent which is important for migrations.
-     * If your plugin heavily modifies the database schema, you may want to remove this property.
-     */
-    if (pluginOptions.disabled) {
-      return config
-    }
-
-    if (!config.endpoints) {
-      config.endpoints = []
-    }
-
-    if (!config.admin) {
-      config.admin = {}
-    }
-
-    if (!config.admin.components) {
-      config.admin.components = {}
-    }
-
-    if (!config.admin.components.beforeDashboard) {
-      config.admin.components.beforeDashboard = []
-    }
-
-    config.admin.components.beforeDashboard.push(
-      `payload-portable-plugin/client#BeforeDashboardClient`,
-    )
-    config.admin.components.beforeDashboard.push(
-      `payload-portable-plugin/rsc#BeforeDashboardServer`,
-    )
-
-    config.endpoints.push({
-      handler: customEndpointHandler,
-      method: 'get',
-      path: '/my-plugin-endpoint',
-    })
-
-    const incomingOnInit = config.onInit
-
-    config.onInit = async (payload) => {
-      // Ensure we are executing any existing onInit functions before running our own.
-      if (incomingOnInit) {
-        await incomingOnInit(payload)
-      }
-
-      const { totalDocs } = await payload.count({
-        collection: 'plugin-collection',
-        where: {
-          id: {
-            equals: 'seeded-by-plugin',
-          },
-        },
-      })
-
-      if (totalDocs === 0) {
-        await payload.create({
-          collection: 'plugin-collection',
-          data: {
-            id: 'seeded-by-plugin',
-          },
-        })
-      }
-    }
-
-    return config
-  }
+export type { PortableArchive, PortableImportReport } from "./types.js"

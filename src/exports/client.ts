@@ -1,1 +1,1 @@
-export { BeforeDashboardClient } from '../components/BeforeDashboardClient.js'
+export { PortableDashboard } from "../components/PortableDashboard.js"

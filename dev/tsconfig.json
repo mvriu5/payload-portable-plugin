@@ -11,17 +11,16 @@
         "../src/**/*.ts",
         "../src/**/*.tsx",
         "next.config.mjs",
-        ".next/types/**/*.ts",
+        ".next/types/**/*.ts"
     ],
     "compilerOptions": {
         "baseUrl": "./",
         "paths": {
             "@payload-config": ["./payload.config.ts"],
-            "payload-ai-plugin": ["../src/index.ts"],
-            "payload-ai-plugin/client": ["../src/exports/client.ts"],
-            "payload-ai-plugin/rsc": ["../src/exports/rsc.ts"],
+            "@mvriu5/payload-portable-plugin": ["../src/index.ts"],
+            "@mvriu5/payload-portable-plugin/client": ["../src/exports/client.ts"]
         },
         "noEmit": true,
-        "emitDeclarationOnly": false,
-    },
+        "emitDeclarationOnly": false
+    }
 }

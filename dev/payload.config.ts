@@ -1,72 +1,55 @@
-import { mongooseAdapter } from "@payloadcms/db-mongodb"
-import { lexicalEditor } from "@payloadcms/richtext-lexical"
-import { MongoMemoryReplSet } from "mongodb-memory-server"
+import { postgresAdapter } from "@payloadcms/db-postgres"
 import path from "path"
 import { buildConfig } from "payload"
-import { payloadPortablePlugin } from "payload-portable-plugin"
-import sharp from "sharp"
 import { fileURLToPath } from "url"
+import { payloadPortablePlugin } from "../src/index.js"
 
-const filename = fileURLToPath(import.meta.url)
-const dirname = path.dirname(filename)
+const dirname = path.dirname(fileURLToPath(import.meta.url))
 
-if (!process.env.ROOT_DIR) {
-    process.env.ROOT_DIR = dirname
-}
-
-const buildConfigWithMemoryDB = async () => {
-    if (process.env.NODE_ENV === "test") {
-        const memoryDB = await MongoMemoryReplSet.create({
-            replSet: {
-                count: 3,
-                dbName: "payloadmemory",
-            },
-        })
-
-        process.env.DATABASE_URL = `${memoryDB.getUri()}&retryWrites=true`
-    }
-
-    return buildConfig({
-        admin: {
-            importMap: {
-                baseDir: path.resolve(dirname),
-            },
+export default buildConfig({
+    admin: {
+        importMap: {
+            baseDir: path.resolve(dirname),
         },
-        collections: [
-            {
-                slug: "posts",
-                fields: [],
-            },
-            {
-                slug: "media",
-                fields: [],
-                upload: {
-                    staticDir: path.resolve(dirname, "media"),
+        user: "users",
+    },
+    collections: [
+        {
+            slug: "users",
+            auth: true,
+            fields: [],
+        },
+        {
+            slug: "posts",
+            fields: [
+                {
+                    name: "title",
+                    type: "text",
+                    required: true,
                 },
-            },
-        ],
-        db: mongooseAdapter({
-            ensureIndexes: true,
-            url: process.env.DATABASE_URL || "",
-        }),
-        editor: lexicalEditor(),
-        email: testEmailAdapter,
-        onInit: async (payload) => {
-            await seed(payload)
+            ],
         },
-        plugins: [
-            payloadPortablePlugin({
-                collections: {
-                    posts: true,
+    ],
+    db: postgresAdapter({
+        allowIDOnCreate: true,
+        pool: {
+            connectionString: process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/payload",
+        },
+    }),
+    globals: [
+        {
+            slug: "settings",
+            fields: [
+                {
+                    name: "siteName",
+                    type: "text",
                 },
-            }),
-        ],
-        secret: process.env.PAYLOAD_SECRET || "test-secret_key",
-        sharp,
-        typescript: {
-            outputFile: path.resolve(dirname, "payload-types.ts"),
+            ],
         },
-    })
-}
-
-export default buildConfigWithMemoryDB()
+    ],
+    plugins: [payloadPortablePlugin()],
+    secret: process.env.PAYLOAD_SECRET ?? "dev-secret",
+    typescript: {
+        outputFile: path.resolve(dirname, "payload-types.ts"),
+    },
+})
