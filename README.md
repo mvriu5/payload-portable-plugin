@@ -1,6 +1,6 @@
 # Payload Portable Plugin
 
-Exportiert alle konfigurierten Payload-Collections und Globals über eine Karte im Admin-Dashboard in eine einzige JSON-Datei und importiert sie später wieder.
+Exportiert alle konfigurierten Payload-Collections und Globals über Aktionen in der Admin-Kopfzeile in eine einzige JSON-Datei und importiert sie später wieder.
 
 ## Verwendung
 
@@ -19,7 +19,7 @@ export default buildConfig({
 })
 ```
 
-Im Dashboard stehen anschließend **Export everything** und **Import everything** zur Verfügung. Der Import arbeitet als Upsert anhand der Dokument-ID: vorhandene Datensätze werden aktualisiert, fehlende angelegt. Es werden keine Datensätze gelöscht. Lokalisierte Inhalte werden für alle konfigurierten Sprachen übertragen.
+In der Admin-Kopfzeile stehen anschließend **Import** und **Export** zur Verfügung. In der Listenansicht jeder eingebundenen Collection erscheinen dieselben Aktionen neben **Create New** und arbeiten dort ausschließlich mit dieser Collection. Der Import arbeitet als Upsert anhand der Dokument-ID: vorhandene Datensätze werden aktualisiert, fehlende angelegt. Es werden keine Datensätze gelöscht. Lokalisierte Inhalte werden für alle konfigurierten Sprachen übertragen.
 
 Alle Endpunkte verlangen standardmäßig einen angemeldeten Benutzer. Zusätzlich erzwingt jede einzelne Lese- und Schreiboperation die Access-Control-Regeln der jeweiligen Collection bzw. des Globals.
 
@@ -39,7 +39,7 @@ payloadPortablePlugin({
 - `access`: zusätzliche Berechtigungsprüfung; standardmäßig ist jeder angemeldete Benutzer zugelassen
 - `batchSize`: Größe der Exportseiten, standardmäßig `100`, maximal `1000`
 - `excludeCollections` / `excludeGlobals`: Slugs, die in beiden Richtungen übersprungen werden
-- `disabled`: deaktiviert Dashboard und Endpunkte
+- `disabled`: deaktiviert die Kopfzeilenaktionen und Endpunkte
 
 ## Hinweise
 

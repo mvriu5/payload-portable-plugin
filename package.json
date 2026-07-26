@@ -36,6 +36,7 @@
         "@swc/core": "^1.15.0",
         "@types/node": "22.19.9",
         "@types/react": "19.2.14",
+        "@types/react-dom": "19.2.3",
         "copyfiles": "2.4.1",
         "cross-env": "^7.0.3",
         "graphql": "^16.8.1",
@@ -49,7 +50,8 @@
     "peerDependencies": {
         "@payloadcms/ui": "^3.84.1",
         "payload": "^3.84.1",
-        "react": "^19.2.0"
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0"
     },
     "engines": {
         "node": "^18.20.2 || >=20.9.0",

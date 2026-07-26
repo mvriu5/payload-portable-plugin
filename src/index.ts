@@ -1,7 +1,7 @@
 import type { Config, PayloadRequest } from "payload"
 
-import { createExportHandler } from "./endpoints/export.js"
-import { createImportHandler } from "./endpoints/import.js"
+import { createCollectionExportHandler, createExportHandler } from "./endpoints/export.js"
+import { createCollectionImportHandler, createImportHandler } from "./endpoints/import.js"
 
 export type PayloadPortablePluginConfig = {
     /**
@@ -60,14 +60,41 @@ export const payloadPortablePlugin =
                 method: "post",
                 path: "/portable/import",
             },
+            {
+                handler: createCollectionExportHandler(options),
+                method: "get",
+                path: "/portable/export/:collection",
+            },
+            {
+                handler: createCollectionImportHandler(options),
+                method: "post",
+                path: "/portable/import/:collection",
+            },
         ]
 
         config.admin = {
             ...(config.admin ?? {}),
             components: {
                 ...(config.admin?.components ?? {}),
-                beforeDashboard: [...(config.admin?.components?.beforeDashboard ?? []), "@mvriu5/payload-portable-plugin/client#PortableDashboard"],
+                actions: [...(config.admin?.components?.actions ?? []), "@mvriu5/payload-portable-plugin/client#PortableActions"],
             },
+        }
+
+        for (const collection of config.collections ?? []) {
+            if (options.excludeCollections.has(collection.slug)) {
+                continue
+            }
+
+            collection.admin = {
+                ...(collection.admin ?? {}),
+                components: {
+                    ...(collection.admin?.components ?? {}),
+                    beforeList: [
+                        ...(collection.admin?.components?.beforeList ?? []),
+                        "@mvriu5/payload-portable-plugin/client#CollectionPortableActions",
+                    ],
+                },
+            }
         }
 
         return config

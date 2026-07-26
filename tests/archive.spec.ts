@@ -14,17 +14,33 @@ const options = {
 }
 
 describe("payloadPortablePlugin", () => {
-    it("adds endpoints and the dashboard component without replacing existing config", () => {
+    it("adds endpoints and admin actions without replacing existing config", () => {
         const existingEndpoint = { handler: vi.fn(), method: "get" as const, path: "/existing" }
         const incomingConfig = {
-            admin: { components: { beforeDashboard: ["existing#Component"] } },
-            collections: [],
+            admin: { components: { actions: ["existing#Component"] } },
+            collections: [
+                {
+                    admin: { components: { beforeList: ["existing#BeforeList"] } },
+                    fields: [],
+                    slug: "posts",
+                },
+            ],
             endpoints: [existingEndpoint],
         } as unknown as Config
         const config = payloadPortablePlugin({})(incomingConfig)
 
-        expect(config.endpoints?.map(({ path }) => path)).toEqual(["/existing", "/portable/export", "/portable/import"])
-        expect(config.admin?.components?.beforeDashboard).toEqual(["existing#Component", "@mvriu5/payload-portable-plugin/client#PortableDashboard"])
+        expect(config.endpoints?.map(({ path }) => path)).toEqual([
+            "/existing",
+            "/portable/export",
+            "/portable/import",
+            "/portable/export/:collection",
+            "/portable/import/:collection",
+        ])
+        expect(config.admin?.components?.actions).toEqual(["existing#Component", "@mvriu5/payload-portable-plugin/client#PortableActions"])
+        expect(config.collections?.[0]?.admin?.components?.beforeList).toEqual([
+            "existing#BeforeList",
+            "@mvriu5/payload-portable-plugin/client#CollectionPortableActions",
+        ])
     })
 
     it("does not change the config when disabled", () => {

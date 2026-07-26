@@ -1,1 +1,1 @@
-export { PortableDashboard } from "../components/PortableDashboard.js"
+export { CollectionPortableActions, PortableActions } from "../components/PortableActions.js"

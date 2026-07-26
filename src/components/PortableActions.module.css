@@ -1,0 +1,13 @@
+.actions {
+    align-items: center;
+    display: flex;
+    gap: calc(var(--base) / 2);
+}
+
+.fileInput {
+    display: none;
+}
+
+.portalMarker {
+    display: none;
+}
