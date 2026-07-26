@@ -23,6 +23,8 @@ The admin header provides **Import** and **Export** actions. The same actions ap
 
 Documents are matched by ID. No import mode deletes documents. Localized content is transferred for every configured locale.
 
+Empty non-default locale variants are omitted. If a document has no localized content for a configured locale yet, the import leaves that locale untouched instead of triggering required-field validation.
+
 Authentication and upload collections are always excluded from both import and export. This prevents incomplete authentication data and missing binary files from producing invalid restores.
 
 By default, all endpoints require an authenticated user. Every individual read and write operation also enforces the access-control rules of its collection or global.

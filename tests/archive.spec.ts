@@ -96,6 +96,39 @@ describe("portable archives", () => {
         expect(find).toHaveBeenNthCalledWith(2, expect.objectContaining({ collection: "posts", depth: 0, overrideAccess: false, page: 2 }))
     })
 
+    it("omits empty non-default locale variants", async () => {
+        const find = vi
+            .fn()
+            .mockResolvedValueOnce({ docs: [{ id: "one", title: "English" }], hasNextPage: false })
+            .mockResolvedValueOnce({ docs: [{ id: "one", title: null }], hasNextPage: false })
+        const findGlobal = vi
+            .fn()
+            .mockResolvedValueOnce({ id: "settings", title: "English settings" })
+            .mockResolvedValueOnce({ id: "settings", title: null })
+        const req = {
+            payload: {
+                config: {
+                    collections: [{ fields: [{ localized: true, name: "title", type: "text" }], slug: "posts" }],
+                    globals: [{ fields: [{ localized: true, name: "title", type: "text" }], slug: "settings" }],
+                    localization: {
+                        defaultLocale: "en",
+                        locales: ["en", "de"],
+                    },
+                },
+                find,
+                findGlobal,
+            },
+            user: { id: "admin" },
+        } as any
+
+        const archive = await createArchive(req, options)
+
+        expect(archive.collections.posts.en).toEqual([{ id: "one", title: "English" }])
+        expect(archive.collections.posts.de).toEqual([])
+        expect(archive.globals.settings.en).toMatchObject({ title: "English settings" })
+        expect(archive.globals.settings.de).toBeUndefined()
+    })
+
     it("upserts documents, updates globals, and reports schema mismatches", async () => {
         const create = vi.fn().mockResolvedValue({})
         const update = vi.fn().mockResolvedValue({})

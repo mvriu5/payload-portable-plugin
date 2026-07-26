@@ -1,5 +1,6 @@
 import { APIError } from "payload"
-import type { PayloadRequest } from "payload"
+import type { Field, PayloadRequest } from "payload"
+import { fieldAffectsData, fieldHasSubFields, fieldIsArrayType, fieldIsBlockType, fieldShouldBeLocalized, tabHasName } from "payload/shared"
 
 import {
     DEFAULT_LOCALE_KEY,
@@ -89,6 +90,97 @@ const getLocale = (localeKey: string): string | undefined => (localeKey === DEFA
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
+const hasValue = (value: unknown): boolean => {
+    if (value === null || value === undefined || value === "") {
+        return false
+    }
+
+    if (Array.isArray(value)) {
+        return value.some(hasValue)
+    }
+
+    if (isObject(value)) {
+        return Object.values(value).some(hasValue)
+    }
+
+    return true
+}
+
+const getDefaultLocaleKey = (req: PayloadRequest): string => {
+    const localization = req.payload.config.localization
+    return localization ? localization.defaultLocale : DEFAULT_LOCALE_KEY
+}
+
+const hasLocalizedContent = (fields: Field[], data: Record<string, unknown>): boolean => {
+    for (const field of fields) {
+        if (field.type === "tabs") {
+            for (const tab of field.tabs) {
+                let tabData = data
+
+                if (tabHasName(tab)) {
+                    const value = data[tab.name]
+
+                    if (isObject(value)) {
+                        tabData = value
+                    }
+                }
+
+                if (fieldShouldBeLocalized({ field: tab, parentIsLocalized: false })) {
+                    if (tabHasName(tab) && hasValue(data[tab.name])) {
+                        return true
+                    }
+                } else if (hasLocalizedContent(tab.fields, tabData)) {
+                    return true
+                }
+            }
+
+            continue
+        }
+
+        if (fieldAffectsData(field)) {
+            const value = data[field.name]
+
+            if (fieldShouldBeLocalized({ field, parentIsLocalized: false })) {
+                if (hasValue(value)) {
+                    return true
+                }
+
+                continue
+            }
+
+            if (fieldIsBlockType(field) && Array.isArray(value)) {
+                for (const row of value) {
+                    if (!isObject(row) || typeof row.blockType !== "string") {
+                        continue
+                    }
+
+                    const block = field.blocks.find(({ slug }) => slug === row.blockType)
+
+                    if (block && hasLocalizedContent(block.fields, row)) {
+                        return true
+                    }
+                }
+            } else if (fieldHasSubFields(field)) {
+                if (fieldIsArrayType(field) && Array.isArray(value)) {
+                    if (value.some((row) => isObject(row) && hasLocalizedContent(field.fields, row))) {
+                        return true
+                    }
+                } else if (isObject(value) && hasLocalizedContent(field.fields, value)) {
+                    return true
+                }
+            }
+
+            continue
+        }
+
+        if (fieldHasSubFields(field) && hasLocalizedContent(field.fields, data)) {
+            return true
+        }
+    }
+
+    return false
+}
+
 const serializeError = (error: unknown): string => {
     if (error instanceof Error) {
         return error.message
@@ -129,6 +221,7 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
         version: PORTABLE_VERSION,
     }
     const locales = getLocaleKeys(req)
+    const defaultLocaleKey = getDefaultLocaleKey(req)
     const payload = getDynamicPayload(req)
 
     for (const collectionConfig of req.payload.config.collections) {
@@ -159,7 +252,12 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
                     user: req.user ?? undefined,
                 })
 
-                documents.push(...result.docs)
+                documents.push(
+                    ...result.docs.filter(
+                        (document) =>
+                            localeKey === defaultLocaleKey || hasLocalizedContent(collectionConfig.fields, document)
+                    )
+                )
                 hasNextPage = result.hasNextPage
                 page += 1
             }
@@ -178,7 +276,7 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
         archive.globals[slug] = {}
 
         for (const localeKey of locales) {
-            archive.globals[slug][localeKey] = await payload.findGlobal({
+            const data = await payload.findGlobal({
                 depth: 0,
                 fallbackLocale: false,
                 locale: getLocale(localeKey),
@@ -187,6 +285,10 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
                 slug,
                 user: req.user ?? undefined,
             })
+
+            if (localeKey === defaultLocaleKey || hasLocalizedContent(globalConfig.fields, data)) {
+                archive.globals[slug][localeKey] = data
+            }
         }
     }
 
