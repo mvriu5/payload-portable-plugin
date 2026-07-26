@@ -66,3 +66,5 @@ The archive contains collection documents and global data, including relationshi
 Hooks, validation, and access control run normally during imports. Schema mismatches are therefore included in the import report for each affected document.
 
 If an import contains errors, the admin UI automatically downloads a sanitized JSON error report. Repeated errors are grouped by entity and error code, with affected IDs, locales, and a suggested resolution. Full technical errors remain available in the Payload server log; SQL queries, local file paths, and stack traces are not exposed in the downloaded report.
+
+Relationship failures are retried automatically after the initial import pass. The plugin continues retrying while at least one queued item succeeds, allowing documents that were imported out of dependency order to resolve later. Unresolvable or circular relationships remain in the final error report.

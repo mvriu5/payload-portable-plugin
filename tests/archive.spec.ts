@@ -299,6 +299,52 @@ describe("portable archives", () => {
         expect(logger.error).toHaveBeenCalledTimes(2)
     })
 
+    it("retries missing relationships until their dependencies exist", async () => {
+        let parentCreated = false
+        const create = vi.fn(async ({ data }: any) => {
+            if (data.id === "child" && !parentCreated) {
+                throw new Error("Failed query: insert relationship to missing parent")
+            }
+
+            if (data.id === "parent") {
+                parentCreated = true
+            }
+
+            return {}
+        })
+        const req = {
+            payload: {
+                config: { collections: [{ slug: "posts" }], globals: [], localization: false },
+                create,
+                db: { allowIDOnCreate: true },
+                find: vi.fn().mockResolvedValue({ docs: [] }),
+                logger: { error: vi.fn() },
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                posts: {
+                    [DEFAULT_LOCALE_KEY]: [
+                        { id: "child", parent: "parent" },
+                        { id: "parent" },
+                    ],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, options)
+
+        expect(report.collections.created).toBe(2)
+        expect(report.errors).toEqual([])
+        expect(create).toHaveBeenCalledTimes(3)
+        expect(req.payload.logger.error).not.toHaveBeenCalled()
+    })
+
     it("rejects unsupported JSON before importing anything", () => {
         expect(() => parseArchive({ format: "something-else", version: 1 })).toThrow("not a supported Payload Portable export")
     })

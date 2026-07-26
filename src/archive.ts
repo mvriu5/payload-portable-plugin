@@ -438,8 +438,16 @@ export const importArchive = async (
     const collectionSlugs = new Set<string>(req.payload.config.collections.map(({ slug }) => slug))
     const globalSlugs = new Set<string>(req.payload.config.globals.map(({ slug }) => slug))
     const payload = getDynamicPayload(req)
+    type ImportErrorContext = { entity: string; id?: number | string; locale?: string; type: "collection" | "global" }
+    type PendingRelation = {
+        context: ImportErrorContext
+        error: unknown
+        run: () => Promise<void>
+    }
+    let pendingRelations: PendingRelation[] = []
+
     const addError = (
-        error: { entity: string; id?: number | string; locale?: string; type: "collection" | "global" },
+        error: ImportErrorContext,
         cause: unknown
     ): void => {
         const classified = classifyImportError(cause)
@@ -485,6 +493,15 @@ export const importArchive = async (
         })
     }
 
+    const queueRelationOrAddError = (context: ImportErrorContext, cause: unknown, run: () => Promise<void>): void => {
+        if (classifyImportError(cause).code === "MISSING_RELATION") {
+            pendingRelations.push({ context, error: cause, run })
+            return
+        }
+
+        addError(context, cause)
+    }
+
     for (const [collection, locales] of Object.entries(archive.collections)) {
         if (!collectionSlugs.has(collection)) {
             addError({ entity: collection, type: "collection" }, new Error("Collection does not exist in the target config."))
@@ -499,13 +516,19 @@ export const importArchive = async (
             const locale = getLocale(localeKey)
 
             for (const document of documents) {
-                try {
+                const context: ImportErrorContext = {
+                    entity: collection,
+                    id: document.id,
+                    locale: localeKey,
+                    type: "collection",
+                }
+                const run = async (): Promise<void> => {
                     const exists = await documentExists(req, collection, document.id, locale)
 
                     if (exists) {
                         if (options.importMode === "add") {
                             report.collections.skipped += 1
-                            continue
+                            return
                         }
 
                         await payload.update({
@@ -522,19 +545,19 @@ export const importArchive = async (
                     } else {
                         if (options.importMode === "replace") {
                             report.collections.skipped += 1
-                            continue
+                            return
                         }
 
                         if (payload.db.allowIDOnCreate !== true) {
                             report.collections.skipped += 1
                             addError(
-                                { entity: collection, id: document.id, locale: localeKey, type: "collection" },
+                                context,
                                 new Error(
                                     'Missing documents were skipped because the database adapter is not configured with "allowIDOnCreate: true".'
                                 )
                             )
 
-                            continue
+                            return
                         }
 
                         await payload.create({
@@ -548,8 +571,12 @@ export const importArchive = async (
                         })
                         report.collections.created += 1
                     }
+                }
+
+                try {
+                    await run()
                 } catch (error) {
-                    addError({ entity: collection, id: document.id, locale: localeKey, type: "collection" }, error)
+                    queueRelationOrAddError(context, error, run)
                 }
             }
         }
@@ -571,7 +598,8 @@ export const importArchive = async (
                 continue
             }
 
-            try {
+            const context: ImportErrorContext = { entity: global, locale: localeKey, type: "global" }
+            const run = async (): Promise<void> => {
                 await payload.updateGlobal({
                     data: stripManagedFields(data, false),
                     depth: 0,
@@ -582,10 +610,42 @@ export const importArchive = async (
                     user: req.user ?? undefined,
                 })
                 report.globals.updated += 1
+            }
+
+            try {
+                await run()
             } catch (error) {
-                addError({ entity: global, locale: localeKey, type: "global" }, error)
+                queueRelationOrAddError(context, error, run)
             }
         }
+    }
+
+    while (pendingRelations.length) {
+        const nextRound: PendingRelation[] = []
+        let resolved = 0
+
+        for (const pending of pendingRelations) {
+            try {
+                await pending.run()
+                resolved += 1
+            } catch (error) {
+                if (classifyImportError(error).code === "MISSING_RELATION") {
+                    nextRound.push({ ...pending, error })
+                } else {
+                    addError(pending.context, error)
+                }
+            }
+        }
+
+        if (resolved === 0) {
+            for (const pending of nextRound) {
+                addError(pending.context, pending.error)
+            }
+
+            break
+        }
+
+        pendingRelations = nextRound
     }
 
     return report
