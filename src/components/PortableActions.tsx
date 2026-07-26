@@ -59,7 +59,6 @@ const PortableButtons = ({ collectionSlug, onImportSuccess }: PortableButtonsPro
             link.download = filename
             link.click()
             URL.revokeObjectURL(url)
-            toast.success("Export completed.")
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Export failed.")
         } finally {
@@ -76,6 +75,9 @@ const PortableButtons = ({ collectionSlug, onImportSuccess }: PortableButtonsPro
         }
 
         setActiveAction("import")
+        const progressToast = toast.loading("Import in progress…", {
+            duration: Infinity,
+        })
 
         try {
             const archive = JSON.parse(await file.text()) as unknown
@@ -110,6 +112,7 @@ const PortableButtons = ({ collectionSlug, onImportSuccess }: PortableButtonsPro
         } catch (error) {
             toast.error(error instanceof Error ? error.message : "Import failed.")
         } finally {
+            toast.dismiss(progressToast)
             setActiveAction(undefined)
         }
     }
