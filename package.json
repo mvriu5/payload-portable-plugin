@@ -29,7 +29,7 @@
         "test": "vitest run tests/archive.spec.ts"
     },
     "devDependencies": {
-        "@payloadcms/db-postgres": "3.84.1",
+        "@payloadcms/db-postgres": "3.86.0",
         "@payloadcms/next": "3.84.1",
         "@payloadcms/ui": "3.84.1",
         "@swc/cli": "0.6.0",
