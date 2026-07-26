@@ -42,8 +42,10 @@ export const payloadPortablePlugin =
         const options = {
             access: pluginOptions.access,
             batchSize,
+            collections: new Set((config.collections ?? []).map(({ slug }) => slug)),
             excludeCollections: new Set(pluginOptions.excludeCollections ?? []),
             excludeGlobals: new Set(pluginOptions.excludeGlobals ?? []),
+            globals: new Set((config.globals ?? []).map(({ slug }) => slug)),
         }
 
         config.endpoints = [

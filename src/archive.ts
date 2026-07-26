@@ -134,7 +134,7 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
     for (const collectionConfig of req.payload.config.collections) {
         const slug = collectionConfig.slug
 
-        if (options.excludeCollections.has(slug)) {
+        if (!options.collections.has(slug) || options.excludeCollections.has(slug)) {
             continue
         }
 
@@ -171,7 +171,7 @@ export const createArchive = async (req: PayloadRequest, options: PortableRuntim
     for (const globalConfig of req.payload.config.globals) {
         const slug = globalConfig.slug
 
-        if (options.excludeGlobals.has(slug)) {
+        if (!options.globals.has(slug) || options.excludeGlobals.has(slug)) {
             continue
         }
 
@@ -261,12 +261,12 @@ export const importArchive = async (req: PayloadRequest, archive: PortableArchiv
     }
 
     for (const [collection, locales] of Object.entries(archive.collections)) {
-        if (options.excludeCollections.has(collection)) {
+        if (!collectionSlugs.has(collection)) {
+            addError({ entity: collection, type: "collection" }, new Error("Collection does not exist in the target config."))
             continue
         }
 
-        if (!collectionSlugs.has(collection)) {
-            addError({ entity: collection, type: "collection" }, new Error("Collection does not exist in the target config."))
+        if (!options.collections.has(collection) || options.excludeCollections.has(collection)) {
             continue
         }
 
@@ -315,12 +315,12 @@ export const importArchive = async (req: PayloadRequest, archive: PortableArchiv
     }
 
     for (const [global, locales] of Object.entries(archive.globals)) {
-        if (options.excludeGlobals.has(global)) {
+        if (!globalSlugs.has(global)) {
+            addError({ entity: global, type: "global" }, new Error("Global does not exist in the target config."))
             continue
         }
 
-        if (!globalSlugs.has(global)) {
-            addError({ entity: global, type: "global" }, new Error("Global does not exist in the target config."))
+        if (!options.globals.has(global) || options.excludeGlobals.has(global)) {
             continue
         }
 

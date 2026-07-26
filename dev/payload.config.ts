@@ -47,7 +47,7 @@ export default buildConfig({
             ],
         },
     ],
-    plugins: [payloadPortablePlugin()],
+    plugins: [payloadPortablePlugin({ access: () => true })],
     secret: process.env.PAYLOAD_SECRET ?? "dev-secret",
     typescript: {
         outputFile: path.resolve(dirname, "payload-types.ts"),

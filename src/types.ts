@@ -38,6 +38,8 @@ export type PortableImportReport = {
 export type PortableRuntimeOptions = {
     access?: (args: { req: PayloadRequest }) => boolean | Promise<boolean>
     batchSize: number
+    collections: Set<string>
     excludeCollections: Set<string>
     excludeGlobals: Set<string>
+    globals: Set<string>
 }

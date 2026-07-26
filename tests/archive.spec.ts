@@ -7,8 +7,10 @@ import { DEFAULT_LOCALE_KEY, PORTABLE_FORMAT, PORTABLE_VERSION, type PortableArc
 
 const options = {
     batchSize: 1,
+    collections: new Set(["posts"]),
     excludeCollections: new Set<string>(),
     excludeGlobals: new Set<string>(),
+    globals: new Set(["settings"]),
 }
 
 describe("payloadPortablePlugin", () => {
@@ -41,7 +43,7 @@ describe("portable archives", () => {
         const req = {
             payload: {
                 config: {
-                    collections: [{ slug: "posts" }],
+                    collections: [{ slug: "posts" }, { slug: "payload-preferences" }],
                     globals: [{ slug: "settings" }],
                     localization: false,
                 },
@@ -54,6 +56,7 @@ describe("portable archives", () => {
         const archive = await createArchive(req, options)
 
         expect(archive.collections.posts[DEFAULT_LOCALE_KEY]).toHaveLength(2)
+        expect(archive.collections["payload-preferences"]).toBeUndefined()
         expect(archive.globals.settings[DEFAULT_LOCALE_KEY]).toMatchObject({ title: "Site" })
         expect(find).toHaveBeenNthCalledWith(1, expect.objectContaining({ collection: "posts", depth: 0, overrideAccess: false, page: 1 }))
         expect(find).toHaveBeenNthCalledWith(2, expect.objectContaining({ collection: "posts", depth: 0, overrideAccess: false, page: 2 }))
