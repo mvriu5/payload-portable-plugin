@@ -30,13 +30,13 @@ const downloadImportReport = (report: PortableImportReport): { failed: number; w
                 {
                     errors: report.errors,
                     generatedAt,
+                    warnings: report.warnings,
                     summary: {
                         collections: report.collections,
                         failed,
                         globals: report.globals,
                         warnings,
                     },
-                    warnings: report.warnings,
                 },
                 null,
                 2

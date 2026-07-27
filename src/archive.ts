@@ -576,6 +576,31 @@ const documentExists = async (req: PayloadRequest, collection: string, id: numbe
     return result.docs.length > 0
 }
 
+const uploadMatchesMediaType = async (
+    req: PayloadRequest,
+    collection: string,
+    id: number | string,
+    mediaType: "image" | "video"
+): Promise<boolean> => {
+    const result = await getDynamicPayload(req).find({
+        collection,
+        depth: 0,
+        fallbackLocale: false,
+        limit: 1,
+        overrideAccess: false,
+        req,
+        user: req.user ?? undefined,
+        where: {
+            id: {
+                equals: id,
+            },
+        },
+    })
+    const mimeType = result.docs[0]?.mimeType
+
+    return typeof mimeType === "string" && mimeType.toLowerCase().startsWith(`${mediaType}/`)
+}
+
 export const importArchive = async (
     req: PayloadRequest,
     archive: PortableArchive,
@@ -827,7 +852,7 @@ export const importArchive = async (
                         for (const item of Array.isArray(value) ? value : []) {
                             const id = getID(item)
 
-                            if (id !== undefined && (await documentExists(req, relationTo, id, undefined))) {
+                            if (id !== undefined && (await uploadMatchesMediaType(req, relationTo, id, mediaType))) {
                                 valid.push(id)
                             } else {
                                 removed += 1
@@ -846,7 +871,7 @@ export const importArchive = async (
                         data[field.name] = valid
                     } else {
                         const id = getID(value)
-                        const exists = id !== undefined && (await documentExists(req, relationTo, id, undefined))
+                        const exists = id !== undefined && (await uploadMatchesMediaType(req, relationTo, id, mediaType))
 
                         if (!exists && field.required) {
                             data[field.name] = await getPlaceholderID(relationTo, mediaType)

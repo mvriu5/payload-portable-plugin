@@ -447,13 +447,15 @@ describe("portable archives", () => {
                 },
                 create,
                 db: { allowIDOnCreate: true },
-                find: vi.fn().mockResolvedValue({ docs: [] }),
+                find: vi.fn(async ({ where }: any) => ({
+                    docs: where?.id?.equals === 414 ? [{ id: 414, mimeType: "image/png" }] : [],
+                })),
                 logger: { error: vi.fn() },
             },
             user: { id: "admin" },
         } as any
         const archive: PortableArchive = {
-            collections: { pages: { [DEFAULT_LOCALE_KEY]: [{ id: "page", video: "missing" }] } },
+            collections: { pages: { [DEFAULT_LOCALE_KEY]: [{ id: "page", video: 414 }] } },
             exportedAt: new Date().toISOString(),
             format: PORTABLE_FORMAT,
             globals: {},
