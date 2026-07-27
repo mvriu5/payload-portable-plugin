@@ -471,7 +471,7 @@ describe("portable archives", () => {
                 collection: "media",
                 file: expect.objectContaining({
                     mimetype: "video/mp4",
-                    name: "payload-portable-video-placeholder.mp4",
+                    name: "payload-portable-video-placeholder-v2.mp4",
                 }),
             })
         )
