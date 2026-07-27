@@ -437,7 +437,14 @@ describe("portable archives", () => {
                 config: {
                     collections: [
                         {
-                            fields: [{ name: "video", relationTo: "media", required: true, type: "upload" }],
+                            fields: [
+                                {
+                                    filterOptions: { mimeType: { contains: "video/" } },
+                                    name: "video",
+                                    relationTo: "media",
+                                    type: "upload",
+                                },
+                            ],
                             slug: "pages",
                         },
                         { fields: [], slug: "media", upload: {} },

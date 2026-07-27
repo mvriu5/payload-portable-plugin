@@ -836,6 +836,10 @@ export const importArchive = async (
                             JSON.stringify(field.filterOptions).toLowerCase().includes("video"))
                             ? "video"
                             : "image"
+                    // Video fields are frequently conditionally required by a custom
+                    // validator (for example when a sibling sourceType is "media")
+                    // while their static Payload `required` flag remains false.
+                    const needsPlaceholder = Boolean(field.required) || mediaType === "video"
                     const getID = (item: unknown): number | string | undefined => {
                         if (typeof item === "number" || typeof item === "string") {
                             return item
@@ -863,7 +867,7 @@ export const importArchive = async (
                             addWarning(warningContext, false)
                         }
 
-                        if (field.required && valid.length === 0) {
+                        if (needsPlaceholder && valid.length === 0) {
                             valid.push(await getPlaceholderID(relationTo, mediaType))
                             addWarning(warningContext, true)
                         }
@@ -873,7 +877,7 @@ export const importArchive = async (
                         const id = getID(value)
                         const exists = id !== undefined && (await uploadMatchesMediaType(req, relationTo, id, mediaType))
 
-                        if (!exists && field.required) {
+                        if (!exists && needsPlaceholder) {
                             data[field.name] = await getPlaceholderID(relationTo, mediaType)
                             addWarning(warningContext, true)
                         } else if (!exists && id !== undefined) {
