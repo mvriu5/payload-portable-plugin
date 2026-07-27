@@ -20,8 +20,9 @@ const getErrorMessage = async (response: Response): Promise<string> => {
     }
 }
 
-const downloadImportErrorReport = (report: PortableImportReport): number => {
+const downloadImportReport = (report: PortableImportReport): { failed: number; warnings: number } => {
     const failed = report.errors.reduce((total, error) => total + error.count, 0)
+    const warnings = report.warnings.reduce((total, warning) => total + warning.count, 0)
     const generatedAt = new Date().toISOString()
     const blob = new Blob(
         [
@@ -33,7 +34,9 @@ const downloadImportErrorReport = (report: PortableImportReport): number => {
                         collections: report.collections,
                         failed,
                         globals: report.globals,
+                        warnings,
                     },
+                    warnings: report.warnings,
                 },
                 null,
                 2
@@ -44,11 +47,11 @@ const downloadImportErrorReport = (report: PortableImportReport): number => {
     const url = URL.createObjectURL(blob)
     const link = document.createElement("a")
     link.href = url
-    link.download = `payload-import-errors-${generatedAt.replace(/[:.]/g, "-")}.json`
+    link.download = `payload-import-report-${generatedAt.replace(/[:.]/g, "-")}.json`
     link.click()
     URL.revokeObjectURL(url)
 
-    return failed
+    return { failed, warnings }
 }
 
 type PortableButtonsProps = {
@@ -133,9 +136,14 @@ const PortableButtons = ({ collectionSlug, onImportSuccess }: PortableButtonsPro
 
             await onImportSuccess?.()
 
-            if (report.errors.length) {
-                const failed = downloadImportErrorReport(report)
-                toast.error(`Import completed with ${failed} error(s). Error report downloaded.`)
+            if (report.errors.length || report.warnings.length) {
+                const result = downloadImportReport(report)
+
+                if (result.failed) {
+                    toast.error(`Import completed with ${result.failed} error(s) and ${result.warnings} warning(s). Report downloaded.`)
+                } else {
+                    toast.warning(`Import completed with ${result.warnings} warning(s). Report downloaded.`)
+                }
             } else {
                 toast.success(message)
             }

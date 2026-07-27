@@ -11,6 +11,7 @@ import {
     type PortableImportError,
     type PortableImportErrorCode,
     type PortableImportReport,
+    type PortableImportWarning,
     type PortableRuntimeOptions,
 } from "./types.js"
 
@@ -24,6 +25,12 @@ type DynamicPayload = {
         collection: string
         data: Record<string, unknown>
         depth: number
+        file?: {
+            data: Buffer
+            mimetype: string
+            name: string
+            size: number
+        }
         locale?: string
         overrideAccess: false
         req: PayloadRequest
@@ -320,6 +327,44 @@ const stripManagedFields = (document: Record<string, unknown>, keepID: boolean):
     return data
 }
 
+const fillRequiredPlaceholderText = (fields: Field[], data: Record<string, unknown>): void => {
+    for (const field of fields) {
+        if (field.type === "tabs") {
+            for (const tab of field.tabs) {
+                if (tabHasName(tab)) {
+                    const currentValue = data[tab.name]
+                    const value: Record<string, unknown> = isObject(currentValue) ? currentValue : {}
+                    data[tab.name] = value
+                    fillRequiredPlaceholderText(tab.fields, value)
+                } else {
+                    fillRequiredPlaceholderText(tab.fields, data)
+                }
+            }
+
+            continue
+        }
+
+        if (fieldAffectsData(field)) {
+            if (data[field.name] === undefined && field.required && (field.type === "text" || field.type === "textarea")) {
+                data[field.name] = "Import placeholder"
+            }
+
+            if (field.type === "group") {
+                const currentValue = data[field.name]
+                const value: Record<string, unknown> = isObject(currentValue) ? currentValue : {}
+                data[field.name] = value
+                fillRequiredPlaceholderText(field.fields, value)
+            }
+
+            continue
+        }
+
+        if (fieldHasSubFields(field)) {
+            fillRequiredPlaceholderText(field.fields, data)
+        }
+    }
+}
+
 export const assertPortableAccess = async (req: PayloadRequest, options: PortableRuntimeOptions): Promise<void> => {
     const allowed = options.access ? await options.access({ req }) : Boolean(req.user)
 
@@ -473,17 +518,20 @@ export const importArchive = async (
         collections: { created: 0, skipped: 0, updated: 0 },
         errors: [],
         globals: { skipped: 0, updated: 0 },
+        warnings: [],
     }
     const collectionSlugs = new Set<string>(req.payload.config.collections.map(({ slug }) => slug))
     const globalSlugs = new Set<string>(req.payload.config.globals.map(({ slug }) => slug))
     const payload = getDynamicPayload(req)
     type ImportErrorContext = { entity: string; id?: number | string; locale?: string; type: "collection" | "global" }
+    type ImportWarningContext = ImportErrorContext & { field: string }
     type PendingRelation = {
         context: ImportErrorContext
         error: unknown
         run: () => Promise<void>
     }
     let pendingRelations: PendingRelation[] = []
+    const placeholderIDs = new Map<string, Promise<number | string>>()
 
     const addError = (
         error: ImportErrorContext,
@@ -541,6 +589,224 @@ export const importArchive = async (
         addError(context, cause)
     }
 
+    const addWarning = (context: ImportWarningContext, required: boolean): void => {
+        const code = required ? "MISSING_MEDIA_REPLACED" : "MISSING_MEDIA_REMOVED"
+        const existing = report.warnings.find(
+            (warning) => warning.code === code && warning.entity === context.entity && warning.type === context.type
+        )
+
+        if (existing) {
+            existing.count += 1
+
+            if (!existing.fields.includes(context.field)) {
+                existing.fields.push(context.field)
+            }
+
+            if (context.id !== undefined && !existing.ids.includes(context.id)) {
+                existing.ids.push(context.id)
+            }
+
+            if (context.locale && !existing.locales.includes(context.locale)) {
+                existing.locales.push(context.locale)
+            }
+
+            return
+        }
+
+        const warning: PortableImportWarning = {
+            code,
+            count: 1,
+            entity: context.entity,
+            fields: [context.field],
+            hint: required
+                ? "Replace the generated placeholder with the intended media document after the import."
+                : "Assign the intended media document after the import if this optional field should not remain empty.",
+            ids: context.id === undefined ? [] : [context.id],
+            locales: context.locale ? [context.locale] : [],
+            message: required
+                ? "A missing required media relation was replaced with an import placeholder."
+                : "A missing optional media relation was removed.",
+            type: context.type,
+        }
+        report.warnings.push(warning)
+    }
+
+    const getPlaceholderID = (collection: string): Promise<number | string> => {
+        const cached = placeholderIDs.get(collection)
+
+        if (cached) {
+            return cached
+        }
+
+        const pending = (async (): Promise<number | string> => {
+            const existing = await payload.find({
+                collection,
+                depth: 0,
+                fallbackLocale: false,
+                limit: 1,
+                overrideAccess: false,
+                req,
+                user: req.user ?? undefined,
+                where: {
+                    filename: {
+                        equals: "payload-portable-placeholder.png",
+                    },
+                },
+            })
+
+            if (existing.docs[0]?.id !== undefined) {
+                return existing.docs[0].id
+            }
+
+            const collectionConfig = req.payload.config.collections.find(({ slug }) => slug === collection)
+
+            if (!collectionConfig?.upload) {
+                throw new Error(`Upload collection "${collection}" does not exist in the target config.`)
+            }
+
+            const data = { ...(options.placeholderData[collection] ?? {}) }
+            fillRequiredPlaceholderText(collectionConfig.fields, data)
+            const buffer = Buffer.from(
+                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                "base64"
+            )
+            const created = await payload.create({
+                collection,
+                data,
+                depth: 0,
+                file: {
+                    data: buffer,
+                    mimetype: "image/png",
+                    name: "payload-portable-placeholder.png",
+                    size: buffer.length,
+                },
+                overrideAccess: false,
+                req,
+                user: req.user ?? undefined,
+            })
+
+            if (!isObject(created) || (typeof created.id !== "string" && typeof created.id !== "number")) {
+                throw new Error(`Placeholder creation for upload collection "${collection}" did not return an ID.`)
+            }
+
+            return created.id
+        })()
+
+        placeholderIDs.set(collection, pending)
+        return pending
+    }
+
+    const resolveMissingUploads = async (
+        fields: Field[],
+        data: Record<string, unknown>,
+        context: ImportErrorContext,
+        path: string[] = []
+    ): Promise<void> => {
+        for (const field of fields) {
+            if (field.type === "tabs") {
+                for (const tab of field.tabs) {
+                    if (tabHasName(tab)) {
+                        const value = data[tab.name]
+
+                        if (isObject(value)) {
+                            await resolveMissingUploads(tab.fields, value, context, [...path, tab.name])
+                        }
+                    } else {
+                        await resolveMissingUploads(tab.fields, data, context, path)
+                    }
+                }
+
+                continue
+            }
+
+            if (fieldAffectsData(field)) {
+                const fieldPath = [...path, field.name]
+                const value = data[field.name]
+                const relationTo = field.type === "upload" && typeof field.relationTo === "string" ? field.relationTo : undefined
+
+                if (field.type === "upload" && relationTo && options.uploadCollections.has(relationTo)) {
+                    const getID = (item: unknown): number | string | undefined => {
+                        if (typeof item === "number" || typeof item === "string") {
+                            return item
+                        }
+
+                        return isObject(item) && (typeof item.id === "number" || typeof item.id === "string") ? item.id : undefined
+                    }
+                    const warningContext = { ...context, field: fieldPath.join(".") }
+
+                    if (field.hasMany) {
+                        const valid: Array<number | string> = []
+                        let removed = 0
+
+                        for (const item of Array.isArray(value) ? value : []) {
+                            const id = getID(item)
+
+                            if (id !== undefined && (await documentExists(req, relationTo, id, undefined))) {
+                                valid.push(id)
+                            } else {
+                                removed += 1
+                            }
+                        }
+
+                        for (let index = 0; index < removed; index += 1) {
+                            addWarning(warningContext, false)
+                        }
+
+                        if (field.required && valid.length === 0) {
+                            valid.push(await getPlaceholderID(relationTo))
+                            addWarning(warningContext, true)
+                        }
+
+                        data[field.name] = valid
+                    } else {
+                        const id = getID(value)
+                        const exists = id !== undefined && (await documentExists(req, relationTo, id, undefined))
+
+                        if (!exists && field.required) {
+                            data[field.name] = await getPlaceholderID(relationTo)
+                            addWarning(warningContext, true)
+                        } else if (!exists && id !== undefined) {
+                            delete data[field.name]
+                            addWarning(warningContext, false)
+                        }
+                    }
+
+                    continue
+                }
+
+                if (fieldIsBlockType(field) && Array.isArray(value)) {
+                    for (const [index, row] of value.entries()) {
+                        if (!isObject(row) || typeof row.blockType !== "string") {
+                            continue
+                        }
+
+                        const block = field.blocks.find(({ slug }) => slug === row.blockType)
+
+                        if (block) {
+                            await resolveMissingUploads(block.fields, row, context, [...fieldPath, String(index)])
+                        }
+                    }
+                } else if (fieldHasSubFields(field)) {
+                    if (fieldIsArrayType(field) && Array.isArray(value)) {
+                        for (const [index, row] of value.entries()) {
+                            if (isObject(row)) {
+                                await resolveMissingUploads(field.fields, row, context, [...fieldPath, String(index)])
+                            }
+                        }
+                    } else if (isObject(value)) {
+                        await resolveMissingUploads(field.fields, value, context, fieldPath)
+                    }
+                }
+
+                continue
+            }
+
+            if (fieldHasSubFields(field)) {
+                await resolveMissingUploads(field.fields, data, context, path)
+            }
+        }
+    }
+
     for (const [collection, locales] of Object.entries(archive.collections)) {
         if (!collectionSlugs.has(collection)) {
             addError({ entity: collection, type: "collection" }, new Error("Collection does not exist in the target config."))
@@ -570,9 +836,16 @@ export const importArchive = async (
                             return
                         }
 
+                        const data = stripManagedFields(document, false)
+                        const collectionConfig = req.payload.config.collections.find(({ slug }) => slug === collection)
+
+                        if (collectionConfig) {
+                            await resolveMissingUploads(collectionConfig.fields ?? [], data, context)
+                        }
+
                         await payload.update({
                             collection,
-                            data: stripManagedFields(document, false),
+                            data,
                             depth: 0,
                             id: document.id,
                             locale,
@@ -599,9 +872,16 @@ export const importArchive = async (
                             return
                         }
 
+                        const data = stripManagedFields(document, true)
+                        const collectionConfig = req.payload.config.collections.find(({ slug }) => slug === collection)
+
+                        if (collectionConfig) {
+                            await resolveMissingUploads(collectionConfig.fields ?? [], data, context)
+                        }
+
                         await payload.create({
                             collection,
-                            data: stripManagedFields(document, true),
+                            data,
                             depth: 0,
                             locale,
                             overrideAccess: false,
@@ -639,8 +919,15 @@ export const importArchive = async (
 
             const context: ImportErrorContext = { entity: global, locale: localeKey, type: "global" }
             const run = async (): Promise<void> => {
+                const dataWithResolvedUploads = stripManagedFields(data, false)
+                const globalConfig = req.payload.config.globals.find(({ slug }) => slug === global)
+
+                if (globalConfig) {
+                    await resolveMissingUploads(globalConfig.fields ?? [], dataWithResolvedUploads, context)
+                }
+
                 await payload.updateGlobal({
-                    data: stripManagedFields(data, false),
+                    data: dataWithResolvedUploads,
                     depth: 0,
                     locale: getLocale(localeKey),
                     overrideAccess: false,

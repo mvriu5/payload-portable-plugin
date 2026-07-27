@@ -50,6 +50,11 @@ payloadPortablePlugin({
     excludeCollections: ["payload-preferences"],
     excludeGlobals: ["internal-settings"],
     importMode: "merge",
+    placeholderData: {
+        media: {
+            alt: "Missing imported image",
+        },
+    },
 })
 ```
 
@@ -57,6 +62,7 @@ payloadPortablePlugin({
 - `access`: additional authorization check; authenticated users are allowed by default
 - `batchSize`: export page size; defaults to `100` and is limited to `1000`
 - `excludeCollections` / `excludeGlobals`: additional slugs to skip during both import and export
+- `placeholderData`: additional data keyed by upload collection slug for generated placeholder documents
 - `disabled`: disables the admin actions and endpoints
 
 ## Notes
@@ -68,3 +74,5 @@ Hooks, validation, and access control run normally during imports. Schema mismat
 If an import contains errors, the admin UI automatically downloads a sanitized JSON error report. Repeated errors are grouped by entity and error code, with affected IDs, locales, and a suggested resolution. Full technical errors remain available in the Payload server log; SQL queries, local file paths, and stack traces are not exposed in the downloaded report.
 
 Relationship failures are retried automatically after the initial import pass. The plugin continues retrying while at least one queued item succeeds, allowing documents that were imported out of dependency order to resolve later. Unresolvable or circular relationships remain in the final error report.
+
+Missing upload relations are resolved before documents are written. Required upload fields receive a shared 1×1 PNG named `payload-portable-placeholder.png`; optional missing upload relations are removed. The plugin reuses one placeholder per upload collection and automatically fills required text and textarea fields with `Import placeholder`. Use `placeholderData` when an upload collection has additional required fields or needs custom values. These replacements are reported as grouped warnings so editors can replace placeholders after the import.

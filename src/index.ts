@@ -35,6 +35,11 @@ export type PayloadPortablePluginConfig = {
      * Globals that must not be exported or imported.
      */
     excludeGlobals?: string[]
+    /**
+     * Additional data used when creating the shared placeholder document for an
+     * upload collection. Keys are upload collection slugs.
+     */
+    placeholderData?: Record<string, Record<string, unknown>>
 }
 
 export const payloadPortablePlugin =
@@ -50,10 +55,15 @@ export const payloadPortablePlugin =
 
         const batchSize = Math.max(1, Math.min(pluginOptions.batchSize ?? 100, 1000))
         const excludedCollections = new Set(pluginOptions.excludeCollections ?? [])
+        const uploadCollections = new Set<string>()
 
         for (const collection of config.collections ?? []) {
             if (collection.auth || collection.upload) {
                 excludedCollections.add(collection.slug)
+            }
+
+            if (collection.upload) {
+                uploadCollections.add(collection.slug)
             }
         }
 
@@ -65,6 +75,8 @@ export const payloadPortablePlugin =
             excludeGlobals: new Set(pluginOptions.excludeGlobals ?? []),
             globals: new Set((config.globals ?? []).map(({ slug }) => slug)),
             importMode: pluginOptions.importMode,
+            placeholderData: pluginOptions.placeholderData ?? {},
+            uploadCollections,
         }
 
         config.endpoints = [
@@ -119,4 +131,12 @@ export const payloadPortablePlugin =
         return config
     }
 
-export type { PortableArchive, PortableImportError, PortableImportErrorCode, PortableImportMode, PortableImportReport } from "./types.js"
+export type {
+    PortableArchive,
+    PortableImportError,
+    PortableImportErrorCode,
+    PortableImportMode,
+    PortableImportReport,
+    PortableImportWarning,
+    PortableImportWarningCode,
+} from "./types.js"

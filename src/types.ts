@@ -37,6 +37,20 @@ export type PortableImportError = {
     type: "collection" | "global"
 }
 
+export type PortableImportWarningCode = "MISSING_MEDIA_REMOVED" | "MISSING_MEDIA_REPLACED"
+
+export type PortableImportWarning = {
+    code: PortableImportWarningCode
+    count: number
+    entity: string
+    fields: string[]
+    hint: string
+    ids: Array<number | string>
+    locales: string[]
+    message: string
+    type: "collection" | "global"
+}
+
 export type PortableImportReport = {
     collections: {
         created: number
@@ -48,6 +62,7 @@ export type PortableImportReport = {
         skipped: number
         updated: number
     }
+    warnings: PortableImportWarning[]
 }
 
 export type PortableImportMode = "add" | "merge" | "replace"
@@ -60,4 +75,6 @@ export type PortableRuntimeOptions = {
     excludeGlobals: Set<string>
     globals: Set<string>
     importMode: PortableImportMode
+    placeholderData: Record<string, Record<string, unknown>>
+    uploadCollections: Set<string>
 }

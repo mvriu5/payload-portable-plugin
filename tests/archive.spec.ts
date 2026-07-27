@@ -12,6 +12,8 @@ const options = {
     excludeGlobals: new Set<string>(),
     globals: new Set(["settings"]),
     importMode: "merge" as const,
+    placeholderData: {},
+    uploadCollections: new Set<string>(),
 }
 
 describe("payloadPortablePlugin", () => {
@@ -351,6 +353,81 @@ describe("portable archives", () => {
         expect(report.errors).toEqual([])
         expect(create).toHaveBeenCalledTimes(3)
         expect(req.payload.logger.error).not.toHaveBeenCalled()
+    })
+
+    it("replaces missing required uploads with one shared placeholder and reports a warning", async () => {
+        const create = vi.fn(async ({ collection }: any) => (collection === "media" ? { id: "placeholder" } : {}))
+        const req = {
+            payload: {
+                config: {
+                    collections: [
+                        {
+                            fields: [{ name: "heroImage", relationTo: "media", required: true, type: "upload" }],
+                            slug: "posts",
+                        },
+                        {
+                            fields: [{ name: "alt", required: true, type: "text" }],
+                            slug: "media",
+                            upload: {},
+                        },
+                    ],
+                    globals: [],
+                    localization: false,
+                },
+                create,
+                db: { allowIDOnCreate: true },
+                find: vi.fn().mockResolvedValue({ docs: [] }),
+                logger: { error: vi.fn() },
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                posts: {
+                    [DEFAULT_LOCALE_KEY]: [
+                        { heroImage: "missing-media", id: "post-one" },
+                        { heroImage: "another-missing-media", id: "post-two" },
+                    ],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, {
+            ...options,
+            placeholderData: { media: { alt: "Missing image" } },
+            uploadCollections: new Set(["media"]),
+        })
+
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "media",
+                data: { alt: "Missing image" },
+                file: expect.objectContaining({
+                    mimetype: "image/png",
+                    name: "payload-portable-placeholder.png",
+                }),
+            })
+        )
+        expect(create.mock.calls.filter(([args]) => args.collection === "media")).toHaveLength(1)
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "posts",
+                data: expect.objectContaining({ heroImage: "placeholder" }),
+            })
+        )
+        expect(report.errors).toEqual([])
+        expect(report.warnings).toEqual([
+            expect.objectContaining({
+                code: "MISSING_MEDIA_REPLACED",
+                count: 2,
+                fields: ["heroImage"],
+                ids: ["post-one", "post-two"],
+            }),
+        ])
     })
 
     it("rejects unsupported JSON before importing anything", () => {
