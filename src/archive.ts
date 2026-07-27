@@ -98,6 +98,73 @@ const getLocale = (localeKey: string): string | undefined => (localeKey === DEFA
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
 
+const cloneData = (data: Record<string, unknown>): Record<string, unknown> =>
+    JSON.parse(JSON.stringify(data)) as Record<string, unknown>
+
+const removeOptionalRelationships = (fields: Field[], data: Record<string, unknown>): boolean => {
+    let removed = false
+
+    for (const field of fields) {
+        if (field.type === "tabs") {
+            for (const tab of field.tabs) {
+                if (tabHasName(tab)) {
+                    const value = data[tab.name]
+
+                    if (isObject(value)) {
+                        removed = removeOptionalRelationships(tab.fields, value) || removed
+                    }
+                } else {
+                    removed = removeOptionalRelationships(tab.fields, data) || removed
+                }
+            }
+
+            continue
+        }
+
+        if (fieldAffectsData(field)) {
+            const value = data[field.name]
+
+            if (field.type === "relationship" && !field.required && value !== undefined) {
+                delete data[field.name]
+                removed = true
+                continue
+            }
+
+            if (fieldIsBlockType(field) && Array.isArray(value)) {
+                for (const row of value) {
+                    if (!isObject(row) || typeof row.blockType !== "string") {
+                        continue
+                    }
+
+                    const block = field.blocks.find(({ slug }) => slug === row.blockType)
+
+                    if (block) {
+                        removed = removeOptionalRelationships(block.fields, row) || removed
+                    }
+                }
+            } else if (fieldHasSubFields(field)) {
+                if (fieldIsArrayType(field) && Array.isArray(value)) {
+                    for (const row of value) {
+                        if (isObject(row)) {
+                            removed = removeOptionalRelationships(field.fields, row) || removed
+                        }
+                    }
+                } else if (isObject(value)) {
+                    removed = removeOptionalRelationships(field.fields, value) || removed
+                }
+            }
+
+            continue
+        }
+
+        if (fieldHasSubFields(field)) {
+            removed = removeOptionalRelationships(field.fields, data) || removed
+        }
+    }
+
+    return removed
+}
+
 const hasValue = (value: unknown): boolean => {
     if (value === null || value === undefined || value === "") {
         return false
@@ -530,7 +597,9 @@ export const importArchive = async (
         error: unknown
         run: () => Promise<void>
     }
+    type DeferredRelation = Omit<PendingRelation, "error">
     let pendingRelations: PendingRelation[] = []
+    const deferredRelations: DeferredRelation[] = []
     const placeholderIDs = new Map<string, Promise<number | string>>()
 
     const addError = (
@@ -631,8 +700,11 @@ export const importArchive = async (
         report.warnings.push(warning)
     }
 
-    const getPlaceholderID = (collection: string): Promise<number | string> => {
-        const cached = placeholderIDs.get(collection)
+    const getPlaceholderID = (collection: string, mediaType: "image" | "video"): Promise<number | string> => {
+        const cacheKey = `${collection}:${mediaType}`
+        const filename =
+            mediaType === "video" ? "payload-portable-video-placeholder.mp4" : "payload-portable-placeholder.png"
+        const cached = placeholderIDs.get(cacheKey)
 
         if (cached) {
             return cached
@@ -649,7 +721,7 @@ export const importArchive = async (
                 user: req.user ?? undefined,
                 where: {
                     filename: {
-                        equals: "payload-portable-placeholder.png",
+                        equals: filename,
                     },
                 },
             })
@@ -666,18 +738,23 @@ export const importArchive = async (
 
             const data = { ...(options.placeholderData[collection] ?? {}) }
             fillRequiredPlaceholderText(collectionConfig.fields, data)
-            const buffer = Buffer.from(
-                "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-                "base64"
-            )
+            // The video fallback is a minimal MP4 container. Its purpose is to satisfy
+            // upload MIME filters and preserve the relation until the real file is assigned.
+            const buffer =
+                mediaType === "video"
+                    ? Buffer.from("AAAAIGZ0eXBpc29tAAACAGlzb21pc28ybXA0MQAAAAhmcmVlAAAAEG1kYXQAAAAA", "base64")
+                    : Buffer.from(
+                          "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                          "base64"
+                      )
             const created = await payload.create({
                 collection,
                 data,
                 depth: 0,
                 file: {
                     data: buffer,
-                    mimetype: "image/png",
-                    name: "payload-portable-placeholder.png",
+                    mimetype: mediaType === "video" ? "video/mp4" : "image/png",
+                    name: filename,
                     size: buffer.length,
                 },
                 overrideAccess: false,
@@ -692,7 +769,7 @@ export const importArchive = async (
             return created.id
         })()
 
-        placeholderIDs.set(collection, pending)
+        placeholderIDs.set(cacheKey, pending)
         return pending
     }
 
@@ -725,6 +802,12 @@ export const importArchive = async (
                 const relationTo = field.type === "upload" && typeof field.relationTo === "string" ? field.relationTo : undefined
 
                 if (field.type === "upload" && relationTo && options.uploadCollections.has(relationTo)) {
+                    const mediaType =
+                        field.name.toLowerCase().includes("video") ||
+                        (typeof field.filterOptions === "object" &&
+                            JSON.stringify(field.filterOptions).toLowerCase().includes("video"))
+                            ? "video"
+                            : "image"
                     const getID = (item: unknown): number | string | undefined => {
                         if (typeof item === "number" || typeof item === "string") {
                             return item
@@ -753,7 +836,7 @@ export const importArchive = async (
                         }
 
                         if (field.required && valid.length === 0) {
-                            valid.push(await getPlaceholderID(relationTo))
+                            valid.push(await getPlaceholderID(relationTo, mediaType))
                             addWarning(warningContext, true)
                         }
 
@@ -763,7 +846,7 @@ export const importArchive = async (
                         const exists = id !== undefined && (await documentExists(req, relationTo, id, undefined))
 
                         if (!exists && field.required) {
-                            data[field.name] = await getPlaceholderID(relationTo)
+                            data[field.name] = await getPlaceholderID(relationTo, mediaType)
                             addWarning(warningContext, true)
                         } else if (!exists && id !== undefined) {
                             delete data[field.name]
@@ -879,9 +962,14 @@ export const importArchive = async (
                             await resolveMissingUploads(collectionConfig.fields ?? [], data, context)
                         }
 
+                        const initialData = cloneData(data)
+                        const hasDeferredRelations = collectionConfig
+                            ? removeOptionalRelationships(collectionConfig.fields ?? [], initialData)
+                            : false
+
                         await payload.create({
                             collection,
-                            data,
+                            data: initialData,
                             depth: 0,
                             locale,
                             overrideAccess: false,
@@ -889,6 +977,24 @@ export const importArchive = async (
                             user: req.user ?? undefined,
                         })
                         report.collections.created += 1
+
+                        if (hasDeferredRelations) {
+                            deferredRelations.push({
+                                context,
+                                run: async (): Promise<void> => {
+                                    await payload.update({
+                                        collection,
+                                        data,
+                                        depth: 0,
+                                        id: document.id,
+                                        locale,
+                                        overrideAccess: false,
+                                        req,
+                                        user: req.user ?? undefined,
+                                    })
+                                },
+                            })
+                        }
                     }
                 }
 
@@ -898,6 +1004,14 @@ export const importArchive = async (
                     queueRelationOrAddError(context, error, run)
                 }
             }
+        }
+    }
+
+    for (const deferred of deferredRelations) {
+        try {
+            await deferred.run()
+        } catch (error) {
+            queueRelationOrAddError(deferred.context, error, deferred.run)
         }
     }
 

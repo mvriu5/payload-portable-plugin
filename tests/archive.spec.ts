@@ -430,6 +430,125 @@ describe("portable archives", () => {
         ])
     })
 
+    it("uses an MP4 placeholder for a required video upload", async () => {
+        const create = vi.fn(async ({ collection }: any) => (collection === "media" ? { id: "video-placeholder" } : {}))
+        const req = {
+            payload: {
+                config: {
+                    collections: [
+                        {
+                            fields: [{ name: "video", relationTo: "media", required: true, type: "upload" }],
+                            slug: "pages",
+                        },
+                        { fields: [], slug: "media", upload: {} },
+                    ],
+                    globals: [],
+                    localization: false,
+                },
+                create,
+                db: { allowIDOnCreate: true },
+                find: vi.fn().mockResolvedValue({ docs: [] }),
+                logger: { error: vi.fn() },
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: { pages: { [DEFAULT_LOCALE_KEY]: [{ id: "page", video: "missing" }] } },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, {
+            ...options,
+            collections: new Set(["pages"]),
+            uploadCollections: new Set(["media"]),
+        })
+
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "media",
+                file: expect.objectContaining({
+                    mimetype: "video/mp4",
+                    name: "payload-portable-video-placeholder.mp4",
+                }),
+            })
+        )
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "pages",
+                data: expect.objectContaining({ video: "video-placeholder" }),
+            })
+        )
+        expect(report.errors).toEqual([])
+    })
+
+    it("imports circular optional relationships in a second phase", async () => {
+        const existing = new Set<string>()
+        const create = vi.fn(async ({ data }: any) => {
+            existing.add(String(data.id))
+            return data
+        })
+        const update = vi.fn(async ({ data }: any) => {
+            for (const reference of data.references ?? []) {
+                if (!existing.has(String(reference))) {
+                    throw new Error("insert or update on table actions_rels violates foreign key constraint")
+                }
+            }
+        })
+        const req = {
+            payload: {
+                config: {
+                    collections: [
+                        {
+                            fields: [
+                                { name: "identifier", required: true, type: "text" },
+                                { hasMany: true, name: "references", relationTo: "actions", type: "relationship" },
+                            ],
+                            slug: "actions",
+                        },
+                    ],
+                    globals: [],
+                    localization: false,
+                },
+                create,
+                db: { allowIDOnCreate: true },
+                find: vi.fn(async ({ where }: any) => ({
+                    docs: existing.has(String(where.id.equals)) ? [{ id: where.id.equals }] : [],
+                })),
+                logger: { error: vi.fn() },
+                update,
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                actions: {
+                    [DEFAULT_LOCALE_KEY]: [
+                        { id: 7, identifier: "gls-action", references: [8] },
+                        { id: 8, identifier: "example", references: [7] },
+                    ],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, {
+            ...options,
+            collections: new Set(["actions"]),
+        })
+
+        expect(create).toHaveBeenNthCalledWith(1, expect.objectContaining({ data: { id: 7, identifier: "gls-action" } }))
+        expect(create).toHaveBeenNthCalledWith(2, expect.objectContaining({ data: { id: 8, identifier: "example" } }))
+        expect(update).toHaveBeenCalledTimes(2)
+        expect(report.collections.created).toBe(2)
+        expect(report.errors).toEqual([])
+    })
+
     it("rejects unsupported JSON before importing anything", () => {
         expect(() => parseArchive({ format: "something-else", version: 1 })).toThrow("not a supported Payload Portable export")
     })
