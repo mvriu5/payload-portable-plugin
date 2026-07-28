@@ -1,6 +1,6 @@
 {
     "name": "@mvriu5/payload-portable-plugin",
-    "version": "0.8.4",
+    "version": "0.8.5",
     "description": "One-click export and import for all Payload CMS collections and globals",
     "license": "MIT",
     "type": "module",
