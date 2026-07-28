@@ -20,6 +20,8 @@ type DynamicFindResult = {
     hasNextPage: boolean
 }
 
+type PortableID = number | string
+
 type DynamicPayload = {
     create: (args: {
         collection: string
@@ -394,6 +396,23 @@ const stripManagedFields = (document: Record<string, unknown>, keepID: boolean):
     return data
 }
 
+const stripUploadManagedFields = (data: Record<string, unknown>): void => {
+    for (const field of [
+        "filename",
+        "filesize",
+        "focalX",
+        "focalY",
+        "height",
+        "mimeType",
+        "sizes",
+        "thumbnailURL",
+        "url",
+        "width",
+    ]) {
+        delete data[field]
+    }
+}
+
 const fillRequiredPlaceholderText = (fields: Field[], data: Record<string, unknown>): void => {
     for (const field of fields) {
         if (field.type === "tabs") {
@@ -556,7 +575,12 @@ export const parseArchive = (value: unknown): PortableArchive => {
     return value as PortableArchive
 }
 
-const documentExists = async (req: PayloadRequest, collection: string, id: number | string, locale: string | undefined): Promise<boolean> => {
+const findDocumentByID = async (
+    req: PayloadRequest,
+    collection: string,
+    id: PortableID,
+    locale: string | undefined
+): Promise<PortableDocument | undefined> => {
     const result = await getDynamicPayload(req).find({
         collection,
         depth: 0,
@@ -573,7 +597,78 @@ const documentExists = async (req: PayloadRequest, collection: string, id: numbe
         },
     })
 
-    return result.docs.length > 0
+    return result.docs[0]
+}
+
+type UniqueFieldValue = {
+    path: string
+    value: boolean | number | string
+}
+
+const getValueAtPath = (data: Record<string, unknown>, path: string[]): unknown => {
+    let value: unknown = data
+
+    for (const segment of path) {
+        if (!isObject(value)) {
+            return undefined
+        }
+
+        value = value[segment]
+    }
+
+    return value
+}
+
+const getUniqueFieldValues = (
+    fields: Field[],
+    data: Record<string, unknown>,
+    path: string[] = []
+): UniqueFieldValue[] => {
+    const values: UniqueFieldValue[] = []
+
+    for (const field of fields) {
+        if (field.type === "tabs") {
+            for (const tab of field.tabs) {
+                values.push(...getUniqueFieldValues(tab.fields, data, tabHasName(tab) ? [...path, tab.name] : path))
+            }
+
+            continue
+        }
+
+        if (fieldAffectsData(field)) {
+            const fieldPath = [...path, field.name]
+            const value = getValueAtPath(data, fieldPath)
+
+            if (
+                "unique" in field &&
+                field.unique &&
+                value !== "" &&
+                (typeof value === "string" || typeof value === "number" || typeof value === "boolean")
+            ) {
+                values.push({ path: fieldPath.join("."), value })
+            }
+
+            if (fieldHasSubFields(field) && !fieldIsArrayType(field) && !fieldIsBlockType(field)) {
+                values.push(...getUniqueFieldValues(field.fields, data, fieldPath))
+            }
+
+            continue
+        }
+
+        if (fieldHasSubFields(field)) {
+            values.push(...getUniqueFieldValues(field.fields, data, path))
+        }
+    }
+
+    return values
+}
+
+const getRelationID = (value: unknown): PortableID | undefined => {
+    if (typeof value === "number" || typeof value === "string") {
+        return value
+    }
+
+    return isObject(value) && (typeof value.id === "number" || typeof value.id === "string") ? value.id : undefined
 }
 
 const uploadMatchesMediaType = async (
@@ -626,6 +721,218 @@ export const importArchive = async (
     let pendingRelations: PendingRelation[] = []
     const deferredRelations: DeferredRelation[] = []
     const placeholderIDs = new Map<string, Promise<number | string>>()
+    const collectionConfigs = new Map(req.payload.config.collections.map((config) => [config.slug, config]))
+    const resolvedTargetIDs = new Map<string, Map<string, PortableID>>()
+    const identityLookups = new Map<string, Promise<PortableID | undefined>>()
+
+    const getIDKey = (id: PortableID): string => `${typeof id}:${String(id)}`
+    const getMappedID = (collection: string, sourceID: PortableID): PortableID | undefined =>
+        resolvedTargetIDs.get(collection)?.get(getIDKey(sourceID))
+    const rememberMappedID = (collection: string, sourceID: PortableID, targetID: PortableID): void => {
+        let collectionMap = resolvedTargetIDs.get(collection)
+
+        if (!collectionMap) {
+            collectionMap = new Map()
+            resolvedTargetIDs.set(collection, collectionMap)
+        }
+
+        collectionMap.set(getIDKey(sourceID), targetID)
+    }
+    const resolveDocumentTargetID = (
+        collection: string,
+        document: PortableDocument,
+        locale: string | undefined
+    ): Promise<PortableID | undefined> => {
+        const lookupKey = `${collection}:${getIDKey(document.id)}`
+        const cached = identityLookups.get(lookupKey)
+
+        if (cached) {
+            return cached
+        }
+
+        const pending = (async (): Promise<PortableID | undefined> => {
+            const byID = await findDocumentByID(req, collection, document.id, locale)
+
+            if (byID?.id !== undefined) {
+                rememberMappedID(collection, document.id, byID.id)
+                return byID.id
+            }
+
+            const config = collectionConfigs.get(collection)
+
+            if (options.importMode === "merge" && config) {
+                const uniqueValues = getUniqueFieldValues(config.fields ?? [], document)
+
+                if (config.upload && (typeof document.filename === "string" || typeof document.filename === "number")) {
+                    uniqueValues.push({ path: "filename", value: document.filename })
+                }
+
+                const deduplicatedValues = [...new Map(uniqueValues.map((item) => [item.path, item])).values()]
+
+                if (deduplicatedValues.length) {
+                    const result = await payload.find({
+                        collection,
+                        depth: 0,
+                        fallbackLocale: false,
+                        limit: Math.max(2, deduplicatedValues.length + 1),
+                        locale,
+                        overrideAccess: false,
+                        req,
+                        user: req.user ?? undefined,
+                        where: {
+                            or: deduplicatedValues.map(({ path, value }) => ({
+                                [path]: {
+                                    equals: value,
+                                },
+                            })),
+                        },
+                    })
+                    const targetIDs = [
+                        ...new Map(
+                            result.docs
+                                .filter((candidate) => typeof candidate.id === "number" || typeof candidate.id === "string")
+                                .map((candidate) => [getIDKey(candidate.id), candidate.id])
+                        ).values(),
+                    ]
+
+                    if (targetIDs.length > 1) {
+                        throw new Error(
+                            `Unique fields from source document "${String(document.id)}" match multiple documents in collection "${collection}".`
+                        )
+                    }
+
+                    if (targetIDs[0] !== undefined) {
+                        rememberMappedID(collection, document.id, targetIDs[0])
+                        return targetIDs[0]
+                    }
+                }
+            }
+
+            if (payload.db.allowIDOnCreate === true && !config?.upload && options.importMode !== "replace") {
+                rememberMappedID(collection, document.id, document.id)
+                return document.id
+            }
+
+            return undefined
+        })()
+
+        identityLookups.set(lookupKey, pending)
+        return pending
+    }
+
+    const remapRelationValue = (relationTo: string, value: unknown): unknown => {
+        const sourceID = getRelationID(value)
+
+        if (sourceID === undefined) {
+            return value
+        }
+
+        return getMappedID(relationTo, sourceID) ?? sourceID
+    }
+
+    const remapEmbeddedRelations = (value: unknown): void => {
+        if (Array.isArray(value)) {
+            value.forEach(remapEmbeddedRelations)
+            return
+        }
+
+        if (!isObject(value)) {
+            return
+        }
+
+        if (typeof value.relationTo === "string" && "value" in value) {
+            value.value = remapRelationValue(value.relationTo, value.value)
+        }
+
+        Object.values(value).forEach(remapEmbeddedRelations)
+    }
+
+    const remapRelationships = (fields: Field[], data: Record<string, unknown>): void => {
+        for (const field of fields) {
+            if (field.type === "tabs") {
+                for (const tab of field.tabs) {
+                    if (tabHasName(tab)) {
+                        const value = data[tab.name]
+
+                        if (isObject(value)) {
+                            remapRelationships(tab.fields, value)
+                        }
+                    } else {
+                        remapRelationships(tab.fields, data)
+                    }
+                }
+
+                continue
+            }
+
+            if (fieldAffectsData(field)) {
+                const value = data[field.name]
+
+                if (field.type === "upload" && typeof field.relationTo === "string") {
+                    const relationTo = field.relationTo
+                    data[field.name] = field.hasMany
+                        ? (Array.isArray(value) ? value : []).map((item) => remapRelationValue(relationTo, item))
+                        : remapRelationValue(relationTo, value)
+                    continue
+                }
+
+                if (field.type === "relationship") {
+                    const relationTo = field.relationTo
+                    const remapOne = (item: unknown): unknown => {
+                        if (typeof relationTo === "string") {
+                            return remapRelationValue(relationTo, item)
+                        }
+
+                        if (isObject(item) && typeof item.relationTo === "string") {
+                            return {
+                                ...item,
+                                value: remapRelationValue(item.relationTo, item.value),
+                            }
+                        }
+
+                        return item
+                    }
+
+                    data[field.name] = field.hasMany ? (Array.isArray(value) ? value : []).map(remapOne) : remapOne(value)
+                    continue
+                }
+
+                if (field.type === "richText") {
+                    remapEmbeddedRelations(value)
+                }
+
+                if (fieldIsBlockType(field) && Array.isArray(value)) {
+                    for (const row of value) {
+                        if (!isObject(row) || typeof row.blockType !== "string") {
+                            continue
+                        }
+
+                        const block = field.blocks.find(({ slug }) => slug === row.blockType)
+
+                        if (block) {
+                            remapRelationships(block.fields, row)
+                        }
+                    }
+                } else if (fieldHasSubFields(field)) {
+                    if (fieldIsArrayType(field) && Array.isArray(value)) {
+                        for (const row of value) {
+                            if (isObject(row)) {
+                                remapRelationships(field.fields, row)
+                            }
+                        }
+                    } else if (isObject(value)) {
+                        remapRelationships(field.fields, value)
+                    }
+                }
+
+                continue
+            }
+
+            if (fieldHasSubFields(field)) {
+                remapRelationships(field.fields, data)
+            }
+        }
+    }
 
     const addError = (
         error: ImportErrorContext,
@@ -922,6 +1229,26 @@ export const importArchive = async (
         }
     }
 
+    const identityPreflight: Array<Promise<PortableID | undefined>> = []
+
+    for (const [collection, locales] of Object.entries(archive.collections)) {
+        if (
+            !collectionSlugs.has(collection) ||
+            !options.collections.has(collection) ||
+            options.excludeCollections.has(collection)
+        ) {
+            continue
+        }
+
+        for (const [localeKey, documents] of Object.entries(locales)) {
+            for (const document of documents) {
+                identityPreflight.push(resolveDocumentTargetID(collection, document, getLocale(localeKey)))
+            }
+        }
+    }
+
+    await Promise.allSettled(identityPreflight)
+
     for (const [collection, locales] of Object.entries(archive.collections)) {
         if (!collectionSlugs.has(collection)) {
             addError({ entity: collection, type: "collection" }, new Error("Collection does not exist in the target config."))
@@ -943,9 +1270,11 @@ export const importArchive = async (
                     type: "collection",
                 }
                 const run = async (): Promise<void> => {
-                    const exists = await documentExists(req, collection, document.id, locale)
+                    const targetID = await resolveDocumentTargetID(collection, document, locale)
+                    const existingDocument =
+                        targetID === undefined ? undefined : await findDocumentByID(req, collection, targetID, locale)
 
-                    if (exists) {
+                    if (existingDocument) {
                         if (options.importMode === "add") {
                             report.collections.skipped += 1
                             return
@@ -955,6 +1284,11 @@ export const importArchive = async (
                         const collectionConfig = req.payload.config.collections.find(({ slug }) => slug === collection)
 
                         if (collectionConfig) {
+                            if (collectionConfig.upload) {
+                                stripUploadManagedFields(data)
+                            }
+
+                            remapRelationships(collectionConfig.fields ?? [], data)
                             await resolveMissingUploads(collectionConfig.fields ?? [], data, context)
                         }
 
@@ -962,7 +1296,7 @@ export const importArchive = async (
                             collection,
                             data,
                             depth: 0,
-                            id: document.id,
+                            id: existingDocument.id,
                             locale,
                             overrideAccess: false,
                             req,
@@ -990,7 +1324,19 @@ export const importArchive = async (
                         const data = stripManagedFields(document, true)
                         const collectionConfig = req.payload.config.collections.find(({ slug }) => slug === collection)
 
+                        if (collectionConfig?.upload) {
+                            report.collections.skipped += 1
+                            addError(
+                                context,
+                                new Error(
+                                    `Upload "${String(document.id)}" from collection "${collection}" has no matching target file. Portable archives contain media metadata, but not file binaries.`
+                                )
+                            )
+                            return
+                        }
+
                         if (collectionConfig) {
+                            remapRelationships(collectionConfig.fields ?? [], data)
                             await resolveMissingUploads(collectionConfig.fields ?? [], data, context)
                         }
 
@@ -999,7 +1345,7 @@ export const importArchive = async (
                             ? removeOptionalRelationships(collectionConfig.fields ?? [], initialData)
                             : false
 
-                        await payload.create({
+                        const created = await payload.create({
                             collection,
                             data: initialData,
                             depth: 0,
@@ -1008,6 +1354,11 @@ export const importArchive = async (
                             req,
                             user: req.user ?? undefined,
                         })
+                        const createdID =
+                            isObject(created) && (typeof created.id === "number" || typeof created.id === "string")
+                                ? created.id
+                                : document.id
+                        rememberMappedID(collection, document.id, createdID)
                         report.collections.created += 1
 
                         if (hasDeferredRelations) {
@@ -1018,7 +1369,7 @@ export const importArchive = async (
                                         collection,
                                         data,
                                         depth: 0,
-                                        id: document.id,
+                                        id: createdID,
                                         locale,
                                         overrideAccess: false,
                                         req,
@@ -1069,6 +1420,7 @@ export const importArchive = async (
                 const globalConfig = req.payload.config.globals.find(({ slug }) => slug === global)
 
                 if (globalConfig) {
+                    remapRelationships(globalConfig.fields ?? [], dataWithResolvedUploads)
                     await resolveMissingUploads(globalConfig.fields ?? [], dataWithResolvedUploads, context)
                 }
 

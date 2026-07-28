@@ -58,7 +58,7 @@ export const payloadPortablePlugin =
         const uploadCollections = new Set<string>()
 
         for (const collection of config.collections ?? []) {
-            if (collection.auth || collection.upload) {
+            if (collection.auth) {
                 excludedCollections.add(collection.slug)
             }
 
@@ -112,7 +112,7 @@ export const payloadPortablePlugin =
         }
 
         for (const collection of config.collections ?? []) {
-            if (options.excludeCollections.has(collection.slug)) {
+            if (collection.auth || collection.upload || options.excludeCollections.has(collection.slug)) {
                 continue
             }
 
