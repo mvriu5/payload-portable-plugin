@@ -493,6 +493,173 @@ describe("portable archives", () => {
         expect(report.errors).toEqual([])
     })
 
+    it("merges by a unique field and remaps relationships to the matched target ID", async () => {
+        const create = vi.fn(async ({ data }: any) => data)
+        const update = vi.fn().mockResolvedValue({})
+        const find = vi.fn(async ({ collection, where }: any) => {
+            if (where?.or) {
+                return {
+                    docs:
+                        collection === "authors" && where.or.some((condition: any) => condition.slug?.equals === "marius")
+                            ? [{ id: 99, slug: "marius" }]
+                            : [],
+                }
+            }
+
+            if (collection === "authors" && where?.id?.equals === 99) {
+                return { docs: [{ id: 99, slug: "marius" }] }
+            }
+
+            return { docs: [] }
+        })
+        const req = {
+            payload: {
+                config: {
+                    collections: [
+                        {
+                            fields: [
+                                { name: "slug", type: "text", unique: true },
+                                { localized: true, name: "name", type: "text" },
+                            ],
+                            slug: "authors",
+                        },
+                        {
+                            fields: [{ name: "author", relationTo: "authors", required: true, type: "relationship" }],
+                            slug: "posts",
+                        },
+                    ],
+                    globals: [],
+                    localization: false,
+                },
+                create,
+                db: { allowIDOnCreate: true },
+                find,
+                logger: { error: vi.fn() },
+                update,
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                authors: {
+                    [DEFAULT_LOCALE_KEY]: [{ id: 7, name: "Marius", slug: "marius" }],
+                },
+                posts: {
+                    [DEFAULT_LOCALE_KEY]: [{ author: 7, id: "post" }],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, {
+            ...options,
+            collections: new Set(["authors", "posts"]),
+        })
+
+        expect(update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "authors",
+                id: 99,
+            })
+        )
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "posts",
+                data: expect.objectContaining({ author: 99 }),
+            })
+        )
+        expect(report.collections).toMatchObject({ created: 1, updated: 1 })
+        expect(report.errors).toEqual([])
+    })
+
+    it("matches media by filename and remaps upload fields before validating them", async () => {
+        const create = vi.fn(async ({ data }: any) => data)
+        const update = vi.fn().mockResolvedValue({})
+        const find = vi.fn(async ({ collection, where }: any) => {
+            if (collection === "media" && where?.or?.some((condition: any) => condition.filename?.equals === "hero.png")) {
+                return { docs: [{ filename: "hero.png", id: "target-media" }] }
+            }
+
+            if (collection === "media" && where?.id?.equals === "target-media") {
+                return { docs: [{ filename: "hero.png", id: "target-media", mimeType: "image/png" }] }
+            }
+
+            return { docs: [] }
+        })
+        const req = {
+            payload: {
+                config: {
+                    collections: [
+                        {
+                            fields: [{ name: "heroImage", relationTo: "media", required: true, type: "upload" }],
+                            slug: "pages",
+                        },
+                        {
+                            fields: [{ localized: true, name: "alt", type: "text" }],
+                            slug: "media",
+                            upload: {},
+                        },
+                    ],
+                    globals: [],
+                    localization: false,
+                },
+                create,
+                db: { allowIDOnCreate: true },
+                find,
+                logger: { error: vi.fn() },
+                update,
+            },
+            user: { id: "admin" },
+        } as any
+        const archive: PortableArchive = {
+            collections: {
+                pages: {
+                    [DEFAULT_LOCALE_KEY]: [{ heroImage: "source-media", id: "page" }],
+                },
+                media: {
+                    [DEFAULT_LOCALE_KEY]: [
+                        {
+                            alt: "Hero",
+                            filename: "hero.png",
+                            id: "source-media",
+                            mimeType: "image/png",
+                            url: "/media/hero.png",
+                        },
+                    ],
+                },
+            },
+            exportedAt: new Date().toISOString(),
+            format: PORTABLE_FORMAT,
+            globals: {},
+            version: PORTABLE_VERSION,
+        }
+
+        const report = await importArchive(req, archive, {
+            ...options,
+            collections: new Set(["pages", "media"]),
+            uploadCollections: new Set(["media"]),
+        })
+
+        expect(create).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "pages",
+                data: expect.objectContaining({ heroImage: "target-media" }),
+            })
+        )
+        expect(update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                collection: "media",
+                data: { alt: "Hero" },
+                id: "target-media",
+            })
+        )
+        expect(report.errors).toEqual([])
+        expect(report.warnings).toEqual([])
+    })
+
     it("imports circular optional relationships in a second phase", async () => {
         const existing = new Set<string>()
         const create = vi.fn(async ({ data }: any) => {

@@ -21,15 +21,15 @@ export default buildConfig({
 
 The admin header provides **Import** and **Export** actions. The same actions appear next to **Create New** in each included collection list and operate only on that collection.
 
-Documents are matched by ID. No import mode deletes documents. Localized content is transferred for every configured locale.
+Documents are matched by ID. In `"merge"` mode, a missing ID falls back to the collection's populated `unique` fields. The resulting source-to-target ID map is applied to relationship, rich-text relationship, and upload fields before documents are written. No import mode deletes documents. Localized content is transferred for every configured locale.
 
 Empty non-default locale variants are omitted. When localized required fields exist, at least one of them must contain a value; generated values such as a localized slug alone do not mark the locale as translated. The import therefore leaves untranslated locales untouched instead of triggering required-field validation.
 
-Authentication and upload collections are always excluded from both import and export. This prevents incomplete authentication data and missing binary files from producing invalid restores.
+Authentication collections are always excluded. Upload collection metadata is included so existing target media can be matched by `filename` and referenced with its target ID. Binary files are not embedded, so an upload without a matching target file cannot be created from the archive.
 
 By default, all endpoints require an authenticated user. Every individual read and write operation also enforces the access-control rules of its collection or global.
 
-`allowIDOnCreate: true` is required on the database adapter to create missing documents with their original IDs and preserve relationship references. Without this option, existing documents can still be updated, while missing documents are skipped and reported.
+`allowIDOnCreate: true` is required on the database adapter to create missing documents with their original IDs. Without this option, documents matched by ID or a unique field can still be updated, while unmatched documents are skipped and reported.
 
 ### Import mode
 
@@ -67,7 +67,7 @@ payloadPortablePlugin({
 
 ## Notes
 
-The archive contains collection documents and global data, including relationship and upload references. Binary files from upload collections and secret authentication data hidden by Payload are not embedded.
+The archive contains collection documents, upload metadata, and global data, including relationship and upload references. Binary files and secret authentication data hidden by Payload are not embedded.
 
 Hooks, validation, and access control run normally during imports. Schema mismatches are therefore included in the import report for each affected document.
 
@@ -75,4 +75,4 @@ If an import contains errors, the admin UI automatically downloads a sanitized J
 
 Relationship failures are retried automatically after the initial import pass. The plugin continues retrying while at least one queued item succeeds, allowing documents that were imported out of dependency order to resolve later. Unresolvable or circular relationships remain in the final error report.
 
-Missing upload relations are resolved before documents are written. Required upload fields receive a shared 1×1 PNG named `payload-portable-placeholder.png`; optional missing upload relations are removed. The plugin reuses one placeholder per upload collection and automatically fills required text and textarea fields with `Import placeholder`. Use `placeholderData` when an upload collection has additional required fields or needs custom values. These replacements are reported as grouped warnings so editors can replace placeholders after the import.
+Missing upload relations are resolved before documents are written. When exported upload metadata matches an existing target `filename`, upload fields are rewritten to that target media ID. Otherwise, required image fields receive a shared 1×1 PNG and required video fields receive a small MP4 placeholder; optional missing upload relations are removed. The plugin reuses one placeholder per upload collection and automatically fills required text and textarea fields with `Import placeholder`. Use `placeholderData` when an upload collection has additional required fields or needs custom values. These replacements are reported as grouped warnings so editors can replace placeholders after the import.
