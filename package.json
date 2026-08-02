@@ -40,7 +40,7 @@
         "copyfiles": "2.4.1",
         "cross-env": "^7.0.3",
         "graphql": "^17.0.2",
-        "next": "16.2.6",
+        "next": "16.2.12",
         "payload": "3.84.1",
         "react": "19.2.6",
         "react-dom": "19.2.6",
