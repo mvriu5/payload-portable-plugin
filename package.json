@@ -38,7 +38,7 @@
         "@types/react": "19.2.14",
         "@types/react-dom": "19.2.3",
         "copyfiles": "2.4.1",
-        "cross-env": "^7.0.3",
+        "cross-env": "^10.1.0",
         "graphql": "^17.0.2",
         "next": "16.2.12",
         "payload": "3.84.1",
