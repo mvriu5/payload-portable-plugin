@@ -30,7 +30,7 @@
     },
     "devDependencies": {
         "@payloadcms/db-postgres": "3.87.0",
-        "@payloadcms/next": "3.86.0",
+        "@payloadcms/next": "3.87.0",
         "@payloadcms/ui": "3.87.0",
         "@swc/cli": "0.8.1",
         "@swc/core": "^1.15.0",
